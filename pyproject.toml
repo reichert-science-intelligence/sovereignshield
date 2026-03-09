@@ -26,6 +26,10 @@ line-length = 100
 python_version = "3.11"
 strict = true
 
+[[tool.mypy.overrides]]
+module = "supabase.*"
+ignore_missing_imports = true
+
 [tool.pytest.ini_options]
 testpaths = ["Artifacts/project/sovereignshield/tests"]
 python_files = ["test_*.py"]
