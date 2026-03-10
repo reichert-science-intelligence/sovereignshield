@@ -4,8 +4,10 @@ Real agent loop: OPA evaluate → Planner → Worker → Reviewer → RAG/Supaba
 """
 from __future__ import annotations
 
+import base64
+import io
 from datetime import datetime
-from typing import Any, cast
+from typing import Any, Callable, cast
 
 # Graceful import fallback — run with simulated data if any module fails
 _USE_REAL_MODULES = True
@@ -15,7 +17,7 @@ try:
     from .agents.planner import planner
     from .agents.worker import worker
     from .agents.reviewer import reviewer
-    from .rag.retriever import embed_and_store, retrieve_similar
+    from .rag.retriever import embed_and_store, kb_count, retrieve_similar
 except ImportError:
     _USE_REAL_MODULES = False
     evaluate = None  # type: ignore[assignment]
@@ -24,7 +26,15 @@ except ImportError:
     worker = None  # type: ignore[assignment]
     reviewer = None  # type: ignore[assignment]
     embed_and_store = None  # type: ignore[assignment]
+    kb_count = None  # type: ignore[assignment]
     retrieve_similar = None  # type: ignore[assignment]
+
+_CHARTS_AVAILABLE = True
+try:
+    from .core import charts
+except ImportError:
+    _CHARTS_AVAILABLE = False
+    charts = None  # type: ignore[assignment]
 
 try:
     from shiny import App, reactive, render, ui
@@ -155,6 +165,32 @@ def _effective_log(limit: int = 10) -> list[dict[str, Any]]:
     if _USE_REAL_MODULES and db is not None:
         return db.fetch_recent(limit)
     return list(_SEED_EVENTS)[:limit]
+
+
+def _chart_to_base64_png(
+    chart_fn: Callable[..., Any],
+    runs: list[dict[str, Any]],
+    **kwargs: Any,
+) -> str:
+    """
+    Render a chart (compliance_heatmap, mttr_trend, violation_donut, kb_growth)
+    to a base64-encoded PNG for ui.img src.
+    """
+    if not _CHARTS_AVAILABLE or charts is None:
+        return ""
+    try:
+        import matplotlib.pyplot as mpl_plt
+
+        p = chart_fn(runs, **kwargs)
+        fig = p.draw()
+        buf: io.BytesIO = io.BytesIO()
+        fig.savefig(buf, format="png", bbox_inches="tight")
+        buf.seek(0)
+        enc = base64.b64encode(buf.read()).decode("ascii")
+        mpl_plt.close(fig)
+        return enc
+    except Exception:
+        return ""
 
 
 def _run_agents(resource_id: str, violation_type: str) -> dict[str, Any]:
@@ -323,9 +359,37 @@ app_ui = ui.page_fluid(
                     ui.column(4, ui.output_ui("kpi_rag")),
                     ui.column(4, ui.output_ui("kpi_kb")),
                 ),
+                ui.output_ui("intel_heatmap"),
+                ui.output_ui("intel_mttr_trend"),
+                ui.output_ui("intel_violation_donut"),
                 ui.card(
                     ui.card_header("Recent events"),
                     ui.output_table("intel_table"),
+                ),
+            ),
+        ),
+        ui.nav_panel(
+            "Analytics",
+            ui.layout_sidebar(
+                ui.sidebar(
+                    ui.input_action_button("analytics_refresh_btn", "Refresh"),
+                    ui.download_button("analytics_csv_download", "Download Audit Log (CSV)"),
+                    title="Analytics",
+                    width=220,
+                ),
+                ui.row(
+                    ui.column(3, ui.output_ui("analytics_kpi_total")),
+                    ui.column(3, ui.output_ui("analytics_kpi_mttr")),
+                    ui.column(3, ui.output_ui("analytics_kpi_compliance")),
+                    ui.column(3, ui.output_ui("analytics_kpi_rag")),
+                ),
+                ui.row(
+                    ui.column(6, ui.output_ui("analytics_chart_heatmap")),
+                    ui.column(6, ui.output_ui("analytics_chart_mttr")),
+                ),
+                ui.row(
+                    ui.column(6, ui.output_ui("analytics_chart_donut")),
+                    ui.column(6, ui.output_ui("analytics_chart_kb")),
                 ),
             ),
         ),
@@ -491,10 +555,25 @@ def server(input: Any, output: Any, session: Any) -> None:
 
     @reactive.calc
     def _kpi_values() -> tuple[float, float, int]:
+        """Live KPIs: Avg MTTR, RAG hit rate, KB count. Fallback to seed when db unavailable."""
         refresh_trigger()
         if _USE_REAL_MODULES and db is not None:
             return (db.avg_mttr(), db.rag_hit_rate(), db.kb_count())
-        return (0.0, 0.0, 0)
+        # Graceful fallback: compute from seed events
+        runs = _effective_log(100)
+        mttr_vals = [
+            float(e["mttr_seconds"])
+            for e in runs
+            if e.get("mttr_seconds") is not None
+        ]
+        avg_mttr = sum(mttr_vals) / len(mttr_vals) if mttr_vals else 0.0
+        rag_rate = (
+            sum(1 for e in runs if e.get("rag_hit") is True) / len(runs)
+            if runs
+            else 0.0
+        )
+        kb_cnt = kb_count() if kb_count is not None else 0
+        return (avg_mttr, rag_rate, kb_cnt)
 
     @render.ui
     def kpi_mttr() -> Any:
@@ -523,6 +602,67 @@ def server(input: Any, output: Any, session: Any) -> None:
             class_="metric-card",
         )
 
+    @reactive.calc
+    def _intel_runs() -> list[dict[str, Any]]:
+        refresh_trigger()
+        if _USE_REAL_MODULES and db is not None:
+            return db.fetch_recent(50)
+        return _effective_log(50)
+
+    @render.ui
+    def intel_heatmap() -> Any:
+        if not _CHARTS_AVAILABLE or charts is None:
+            return ui.div(ui.p("Chart unavailable"), class_="metric-card")
+        runs = _intel_runs()
+        enc = _chart_to_base64_png(charts.compliance_heatmap, runs)
+        if not enc:
+            return ui.div(ui.p("Chart unavailable"), class_="metric-card")
+        return ui.div(
+            ui.h5("Compliance heatmap"),
+            ui.tags.img(
+                src=f"data:image/png;base64,{enc}",
+                alt="Compliance heatmap",
+                style="max-width:100%; height:auto;",
+            ),
+            class_="metric-card",
+        )
+
+    @render.ui
+    def intel_mttr_trend() -> Any:
+        if not _CHARTS_AVAILABLE or charts is None:
+            return ui.div(ui.p("Chart unavailable"), class_="metric-card")
+        runs = _intel_runs()
+        enc = _chart_to_base64_png(charts.mttr_trend, runs)
+        if not enc:
+            return ui.div(ui.p("Chart unavailable"), class_="metric-card")
+        return ui.div(
+            ui.h5("MTTR trend"),
+            ui.tags.img(
+                src=f"data:image/png;base64,{enc}",
+                alt="MTTR trend",
+                style="max-width:100%; height:auto;",
+            ),
+            class_="metric-card",
+        )
+
+    @render.ui
+    def intel_violation_donut() -> Any:
+        if not _CHARTS_AVAILABLE or charts is None:
+            return ui.div(ui.p("Chart unavailable"), class_="metric-card")
+        runs = _intel_runs()
+        enc = _chart_to_base64_png(charts.violation_donut, runs)
+        if not enc:
+            return ui.div(ui.p("Chart unavailable"), class_="metric-card")
+        return ui.div(
+            ui.h5("Violation donut"),
+            ui.tags.img(
+                src=f"data:image/png;base64,{enc}",
+                alt="Violation donut",
+                style="max-width:100%; height:auto;",
+            ),
+            class_="metric-card",
+        )
+
     @render.table
     def intel_table() -> Any:
         import pandas as pd
@@ -536,6 +676,162 @@ def server(input: Any, output: Any, session: Any) -> None:
             if c not in df.columns:
                 df[c] = ""
         return df[[c for c in cols if c in df.columns]]
+
+    # ── Analytics tab ─────────────────────────────────────────────────────────
+    analytics_refresh_trigger: reactive.Value[int] = reactive.Value(0)
+
+    @reactive.effect
+    @reactive.event(input.analytics_refresh_btn)
+    def _analytics_refresh() -> None:
+        analytics_refresh_trigger.set(analytics_refresh_trigger() + 1)
+
+    @reactive.calc
+    def _analytics_runs() -> list[dict[str, Any]]:
+        analytics_refresh_trigger()
+        if _USE_REAL_MODULES and db is not None:
+            return db.fetch_recent(50)
+        return _effective_log(50)
+
+    @reactive.calc
+    def _analytics_kpi_values() -> tuple[int, float, float, float]:
+        """Total runs, avg MTTR, compliance rate %, RAG hit rate %."""
+        runs = _analytics_runs()
+        if not runs:
+            return (0, 0.0, 0.0, 0.0)
+        total = len(runs)
+        mttr_vals = [
+            float(e["mttr_seconds"])
+            for e in runs
+            if e.get("mttr_seconds") is not None
+        ]
+        avg_mttr = sum(mttr_vals) / len(mttr_vals) if mttr_vals else 0.0
+        approved = sum(1 for e in runs if str(e.get("reviewer_verdict", "")).strip().upper() == "APPROVED")
+        compliance_pct = (approved / total) * 100.0 if total else 0.0
+        rag_hits = sum(1 for e in runs if e.get("rag_hit") is True)
+        rag_pct = (rag_hits / total) * 100.0 if total else 0.0
+        return (total, avg_mttr, compliance_pct, rag_pct)
+
+    @render.ui
+    def analytics_kpi_total() -> Any:
+        total = _analytics_kpi_values()[0]
+        return ui.div(
+            ui.h5("Total runs"),
+            ui.p(str(total), class_="mb-0"),
+            class_="metric-card",
+        )
+
+    @render.ui
+    def analytics_kpi_mttr() -> Any:
+        avg = _analytics_kpi_values()[1]
+        return ui.div(
+            ui.h5("Avg MTTR"),
+            ui.p(f"{avg:.2f}s", class_="mb-0"),
+            class_="metric-card",
+        )
+
+    @render.ui
+    def analytics_kpi_compliance() -> Any:
+        pct = _analytics_kpi_values()[2]
+        return ui.div(
+            ui.h5("Compliance rate"),
+            ui.p(f"{pct:.1f}%", class_="mb-0"),
+            class_="metric-card",
+        )
+
+    @render.ui
+    def analytics_kpi_rag() -> Any:
+        pct = _analytics_kpi_values()[3]
+        return ui.div(
+            ui.h5("RAG hit rate"),
+            ui.p(f"{pct:.1f}%", class_="mb-0"),
+            class_="metric-card",
+        )
+
+    @render.ui
+    def analytics_chart_heatmap() -> Any:
+        if not _CHARTS_AVAILABLE or charts is None:
+            return ui.div(ui.p("Chart unavailable"), class_="metric-card")
+        runs = _analytics_runs()
+        enc = _chart_to_base64_png(charts.compliance_heatmap, runs)
+        if not enc:
+            return ui.div(ui.p("Chart unavailable"), class_="metric-card")
+        return ui.div(
+            ui.h6("Compliance heatmap"),
+            ui.tags.img(
+                src=f"data:image/png;base64,{enc}",
+                alt="Compliance heatmap",
+                style="max-width:100%; height:auto;",
+            ),
+            class_="metric-card",
+        )
+
+    @render.ui
+    def analytics_chart_mttr() -> Any:
+        if not _CHARTS_AVAILABLE or charts is None:
+            return ui.div(ui.p("Chart unavailable"), class_="metric-card")
+        runs = _analytics_runs()
+        enc = _chart_to_base64_png(charts.mttr_trend, runs)
+        if not enc:
+            return ui.div(ui.p("Chart unavailable"), class_="metric-card")
+        return ui.div(
+            ui.h6("MTTR trend"),
+            ui.tags.img(
+                src=f"data:image/png;base64,{enc}",
+                alt="MTTR trend",
+                style="max-width:100%; height:auto;",
+            ),
+            class_="metric-card",
+        )
+
+    @render.ui
+    def analytics_chart_donut() -> Any:
+        if not _CHARTS_AVAILABLE or charts is None:
+            return ui.div(ui.p("Chart unavailable"), class_="metric-card")
+        runs = _analytics_runs()
+        enc = _chart_to_base64_png(charts.violation_donut, runs)
+        if not enc:
+            return ui.div(ui.p("Chart unavailable"), class_="metric-card")
+        return ui.div(
+            ui.h6("Violation donut"),
+            ui.tags.img(
+                src=f"data:image/png;base64,{enc}",
+                alt="Violation donut",
+                style="max-width:100%; height:auto;",
+            ),
+            class_="metric-card",
+        )
+
+    @render.ui
+    def analytics_chart_kb() -> Any:
+        if not _CHARTS_AVAILABLE or charts is None:
+            return ui.div(ui.p("Chart unavailable"), class_="metric-card")
+        runs = _analytics_runs()
+        enc = _chart_to_base64_png(charts.kb_growth, runs)
+        if not enc:
+            return ui.div(ui.p("Chart unavailable"), class_="metric-card")
+        return ui.div(
+            ui.h6("KB growth"),
+            ui.tags.img(
+                src=f"data:image/png;base64,{enc}",
+                alt="KB growth",
+                style="max-width:100%; height:auto;",
+            ),
+            class_="metric-card",
+        )
+
+    @render.download(filename="audit_log.csv")
+    def analytics_csv_download() -> Any:
+        import pandas as pd
+
+        if _USE_REAL_MODULES and db is not None:
+            rows = db.fetch_recent(10000)
+        else:
+            rows = _effective_log(10000)
+        if not rows:
+            yield "task_id,timestamp,violation_type,resource_id,reviewer_verdict,is_compliant,mttr_seconds,rag_hit\n"
+            return
+        df = pd.DataFrame(rows)
+        yield df.to_csv(index=False)
 
 
 app = App(app_ui, server, debug=True)
