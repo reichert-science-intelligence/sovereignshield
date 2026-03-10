@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from dotenv import load_dotenv
 
@@ -24,10 +24,13 @@ for _p in _env_candidates:
     if _p.is_file():
         load_dotenv(dotenv_path=_p)
 
+_rag_kb_count: Callable[[], int] | None = None
 try:
-    from ..rag.retriever import kb_count as _rag_kb_count
+    from ..rag.retriever import kb_count
+
+    _rag_kb_count = kb_count
 except ImportError:
-    _rag_kb_count = None
+    pass
 
 _SUPABASE_AVAILABLE = False
 _client: Any = None

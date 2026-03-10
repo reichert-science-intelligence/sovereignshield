@@ -5,7 +5,7 @@ Real agent loop: OPA evaluate → Planner → Worker → Reviewer → RAG/Supaba
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 # Graceful import fallback — run with simulated data if any module fails
 _USE_REAL_MODULES = True
@@ -206,13 +206,13 @@ def _run_agents(resource_id: str, violation_type: str) -> dict[str, Any]:
         }
 
     t0 = datetime.now()
-    plan = planner.run(selected)
+    plan = planner.run(dict(selected))  # Violation TypedDict → dict for planner
     work = worker.run(plan)
     result = reviewer.run(plan, work, started_at=t0)
 
     # Waterfall trace: all 5 OPA checks with ✓/✗ [policy_id] — [message] ([severity])
     resource_violations_pre = [v for v in violations if str(v.get("resource_id", "")) == resource_id]
-    sev = _highest_severity(resource_violations_pre)
+    sev = _highest_severity(cast(list[dict[str, Any]], resource_violations_pre))
     trace = _build_waterfall_trace(result.checks_passed, result.checks_failed, sev)
 
     # On APPROVED: embed fix into RAG
@@ -231,7 +231,7 @@ def _run_agents(resource_id: str, violation_type: str) -> dict[str, Any]:
         )
 
     # Persist to Supabase via audit_db (severity = highest among resource's violations)
-    severity_val = _highest_severity(resource_violations_pre)
+    severity_val = _highest_severity(cast("list[dict[str, Any]]", resource_violations_pre))
     event: dict[str, Any] = {
         "task_id": plan.task_id,
         "timestamp": datetime.now().isoformat(),
@@ -336,7 +336,7 @@ app_ui = ui.page_fluid(
 def server(input: Any, output: Any, session: Any) -> None:
     # Violation choices from evaluate(RESOURCES)
     violations = (
-        evaluate(RESOURCES) if _USE_REAL_MODULES and evaluate else []
+        evaluate(RESOURCES) if _USE_REAL_MODULES and evaluate is not None else []
     )
     if not violations:
         violations = [
@@ -344,6 +344,8 @@ def server(input: Any, output: Any, session: Any) -> None:
                 "resource_id": "s3-staging-analytics",
                 "violation_type": "data_residency",
                 "severity": "HIGH",
+                "regulation_cited": "",
+                "detail": "",
             }
         ]
     # Shiny select: value -> label (user sees label, gets value)
@@ -376,7 +378,7 @@ def server(input: Any, output: Any, session: Any) -> None:
     def catalogue_table() -> Any:
         import pandas as pd
         violations = (
-            evaluate(RESOURCES) if _USE_REAL_MODULES and evaluate else []
+            evaluate(RESOURCES) if _USE_REAL_MODULES and evaluate is not None else []
         )
         df = pd.DataFrame(RESOURCES)
         cols = ["resource_id", "region", "type", "encryption_enabled", "is_public"]
@@ -408,7 +410,7 @@ def server(input: Any, output: Any, session: Any) -> None:
         if not sel or not str(sel).strip():
             return ui.div()
         violations = (
-            evaluate(RESOURCES) if _USE_REAL_MODULES and evaluate else []
+            evaluate(RESOURCES) if _USE_REAL_MODULES and evaluate is not None else []
         )
         resource_viols = [
             v for v in violations if str(v.get("resource_id", "")) == str(sel)
@@ -420,10 +422,10 @@ def server(input: Any, output: Any, session: Any) -> None:
             pid = str(v.get("violation_type", ""))  # policy_id from violation_type
             sev = str(v.get("severity", ""))
             msg = str(v.get("detail", ""))
-            items.append(ui.li(f"policy: {pid} — {msg} (severity: {sev})"))
+            items.append(ui.tags.li(f"policy: {pid} — {msg} (severity: {sev})"))
         return ui.div(
             ui.h6("Violation details"),
-            ui.ul(*items, class_="list-unstyled"),
+            ui.tags.ul(*items, class_="list-unstyled"),
             class_="mt-3 p-3 border rounded",
         )
 
@@ -432,7 +434,7 @@ def server(input: Any, output: Any, session: Any) -> None:
         r = agent_result()
         if r is None:
             return "Click Run to execute the agent loop."
-        return r.get("trace", "")
+        return str(r.get("trace", ""))
 
     @render.text
     def verdict_output() -> str:
