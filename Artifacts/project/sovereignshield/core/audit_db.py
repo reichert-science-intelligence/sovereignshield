@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any
 
 from dotenv import load_dotenv
 
@@ -24,11 +24,10 @@ for _p in _env_candidates:
     if _p.is_file():
         load_dotenv(dotenv_path=_p)
 
-_rag_kb_count: Optional[Callable[[], int]] = None
 try:
     from ..rag.retriever import kb_count as _rag_kb_count
 except ImportError:
-    pass
+    _rag_kb_count = None
 
 _SUPABASE_AVAILABLE = False
 _client: Any = None
@@ -90,6 +89,7 @@ class AuditDB:
                     "mttr_seconds": event.get("mttr_seconds"),
                     "tokens_used": event.get("tokens_used", 0),
                     "rag_hit": event.get("rag_hit", False),
+                    "severity": event.get("severity"),
                 }
                 _client.table(_TABLE).insert(row).execute()
                 return True

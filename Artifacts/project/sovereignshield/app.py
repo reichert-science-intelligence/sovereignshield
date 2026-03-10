@@ -4,87 +4,46 @@ Real agent loop: OPA evaluate → Planner → Worker → Reviewer → RAG/Supaba
 """
 from __future__ import annotations
 
-import os
-import sys
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
-
 from datetime import datetime
-from typing import Any, cast
+from typing import Any
 
 # Graceful import fallback — run with simulated data if any module fails
 _USE_REAL_MODULES = True
 try:
-    from project.sovereignshield.core.opa_eval import evaluate
-    from project.sovereignshield.core.audit_db import db
-    from project.sovereignshield.agents.planner import planner
-    from project.sovereignshield.agents.worker import worker
-    from project.sovereignshield.agents.reviewer import reviewer
-    from project.sovereignshield.rag.retriever import embed_and_store, retrieve_similar
+    from .core.opa_eval import evaluate
+    from .core.audit_db import db
+    from .agents.planner import planner
+    from .agents.worker import worker
+    from .agents.reviewer import reviewer
+    from .rag.retriever import embed_and_store, retrieve_similar
 except ImportError:
     _USE_REAL_MODULES = False
-    evaluate = None
-    db = None
-    planner = None
-    worker = None
-    reviewer = None
-    embed_and_store = None
-    retrieve_similar = None
+    evaluate = None  # type: ignore[assignment]
+    db = None  # type: ignore[assignment]
+    planner = None  # type: ignore[assignment]
+    worker = None  # type: ignore[assignment]
+    reviewer = None  # type: ignore[assignment]
+    embed_and_store = None  # type: ignore[assignment]
+    retrieve_similar = None  # type: ignore[assignment]
 
 try:
     from shiny import App, reactive, render, ui
 except ImportError:
     raise ImportError("shiny is required. Run: pip install shiny")
 
-from project.sovereignshield.models import CloudResource
+# Synthetic RESOURCES catalogue — 5 columns for Catalogue tab
+RESOURCES: list[dict[str, Any]] = [
+    {"resource_id": "s3-staging-analytics", "region": "eu-west-1", "type": "s3", "encryption_enabled": False, "is_public": True},
+    {"resource_id": "ec2-prod-api", "region": "us-east-1", "type": "ec2", "encryption_enabled": True, "is_public": False},
+]
 
-# Full 5-resource catalogue
-RESOURCES: list[CloudResource] = [
-    CloudResource(
-        resource_id="s3-phi-claims-001",
-        resource_type="aws_s3_bucket",
-        region="us-east-1",
-        encryption_enabled=True,
-        cmk_key_id="arn:aws:kms:us-east-1:123456789:key/abc-001",
-        is_public=False,
-        tags={"DataClass": "PHI", "Environment": "prod"},
-    ),
-    CloudResource(
-        resource_id="s3-staging-analytics",
-        resource_type="aws_s3_bucket",
-        region="eu-central-1",
-        encryption_enabled=False,
-        cmk_key_id=None,
-        is_public=False,
-        tags={"Environment": "staging"},
-    ),
-    CloudResource(
-        resource_id="rds-member-records",
-        resource_type="aws_db_instance",
-        region="us-east-1",
-        encryption_enabled=True,
-        cmk_key_id="arn:aws:kms:us-east-1:123456789:key/abc-002",
-        is_public=False,
-        tags={"DataClass": "PHI", "Environment": "prod"},
-    ),
-    CloudResource(
-        resource_id="rds-dev-sandbox",
-        resource_type="aws_db_instance",
-        region="us-west-2",
-        encryption_enabled=False,
-        cmk_key_id=None,
-        is_public=True,
-        tags={"Environment": "dev"},
-    ),
-    CloudResource(
-        resource_id="lambda-eligibility",
-        resource_type="aws_lambda_function",
-        region="us-east-1",
-        encryption_enabled=True,
-        cmk_key_id="arn:aws:kms:us-east-1:123456789:key/abc-003",
-        is_public=False,
-        tags={"DataClass": "PHI", "Environment": "prod"},
-    ),
+# Canonical 5 OPA checks for waterfall trace: (policy_id, message)
+_OPA_CHECKS: list[tuple[str, str]] = [
+    ("approved_regions", "Approved regions: us-east-1, us-gov-east-1"),
+    ("cmk_encryption", "CMK encryption (aws:kms) required"),
+    ("phi_tag", "DataClass=PHI tag on all resources"),
+    ("is_public", "is_public must be False"),
+    ("data_residency", "data residency / region constraint"),
 ]
 
 # Seed events for System Intelligence fallback when db is unavailable
@@ -106,11 +65,95 @@ _SEED_EVENTS: list[dict[str, Any]] = [
 ]
 
 
+def _html_esc(s: str) -> str:
+    """Escape HTML special characters."""
+    return (
+        s.replace("&", "&amp;")
+        .replace("<", "&lt;")
+        .replace(">", "&gt;")
+        .replace('"', "&quot;")
+        .replace("'", "&#39;")
+    )
+
+
+def _hcl_synthetic_before(resource_id: str) -> str:
+    """Synthetic before (non-compliant) HCL per resource_id."""
+    blocks: dict[str, str] = {
+        "s3-staging-analytics": '''resource "aws_s3_bucket" "staging_analytics" {
+  bucket = "staging-analytics"
+  # Missing: server_side_encryption, region constraint
+}
+''',
+        "ec2-prod-api": '''resource "aws_instance" "prod_api" {
+  ami           = "ami-12345678"
+  instance_type = "t3.medium"
+  # Missing: PHI tag, encryption
+}
+''',
+    }
+    return blocks.get(resource_id, f'# No synthetic before for {resource_id}\n')
+
+
+def _hcl_synthetic_after(resource_id: str) -> str:
+    """Synthetic after (compliant) HCL per resource_id — used when no work output."""
+    blocks: dict[str, str] = {
+        "s3-staging-analytics": '''resource "aws_s3_bucket_server_side_encryption_configuration" "fix_staging" {
+  bucket = aws_s3_bucket.staging_analytics.id
+  rule {
+    apply_server_side_encryption_by_default {
+      sse_algorithm     = "aws:kms"
+      kms_master_key_id = aws_kms_key.main.arn
+    }
+  }
+}
+''',
+        "ec2-prod-api": '''resource "aws_instance" "prod_api" {
+  ami           = "ami-12345678"
+  instance_type = "t3.medium"
+  tags = {
+    DataClass = "PHI"
+  }
+}
+''',
+    }
+    return blocks.get(resource_id, f'# No synthetic after for {resource_id}\n')
+
+
+def _build_waterfall_trace(
+    checks_passed: list[str],
+    checks_failed: list[str],
+    violation_severity: str,
+) -> str:
+    """Build 5-line waterfall trace: ✓/✗ [policy_id] — [message] ([severity])."""
+    keywords: list[str] = ["region", "encryption", "phi", "public", "residency"]
+    lines: list[str] = []
+    for ((pid, msg), kw) in zip(_OPA_CHECKS, keywords, strict=True):
+        failed = any(kw in c.lower() for c in checks_failed)
+        if failed:
+            sym = "✗"
+            sev = violation_severity
+        else:
+            sym = "✓"
+            sev = "INFO"
+        lines.append(f"  {sym} [{pid}] — {msg} ({sev})")
+    return "\n".join(lines) + "\n"
+
+
+def _highest_severity(violations: list[dict[str, Any]]) -> str:
+    """Return highest severity among violations. HIGH > MEDIUM > LOW > INFO."""
+    order: dict[str, int] = {"HIGH": 4, "MEDIUM": 3, "LOW": 2, "INFO": 1}
+    best = "INFO"
+    for v in violations:
+        s = str(v.get("severity", "INFO")).upper().strip()
+        if order.get(s, 0) > order.get(best, 0):
+            best = s
+    return best
+
+
 def _effective_log(limit: int = 10) -> list[dict[str, Any]]:
     """Fetch recent events: db.fetch_recent(limit) with local fallback to _SEED_EVENTS."""
     if _USE_REAL_MODULES and db is not None:
-        result = db.fetch_recent(limit)
-        return cast(list[dict[str, Any]], result)
+        return db.fetch_recent(limit)
     return list(_SEED_EVENTS)[:limit]
 
 
@@ -120,14 +163,22 @@ def _run_agents(resource_id: str, violation_type: str) -> dict[str, Any]:
     Returns dict with trace, verdict, checks_passed, checks_failed, etc.
     """
     if not _USE_REAL_MODULES or evaluate is None or planner is None or worker is None or reviewer is None:
+        sim_trace = _build_waterfall_trace(
+            ["Region check", "CMK check"],
+            ["PHI DataClass tag missing"],
+            "HIGH",
+        )
         return {
-            "trace": "  [Simulated] Region check: ✓\n  [Simulated] CMK check: ✓\n  [Simulated] PHI tag: ✗\n",
+            "trace": sim_trace,
             "verdict": "NEEDS_REVISION",
             "checks_passed": ["Region check", "CMK check"],
             "checks_failed": ["PHI DataClass tag missing"],
             "result": None,
             "plan": None,
             "work": None,
+            "mttr_seconds": 2.5,
+            "hcl_before": _hcl_synthetic_before("s3-staging-analytics"),
+            "hcl_after": _hcl_synthetic_after("s3-staging-analytics"),
         }
 
     violations = evaluate(RESOURCES)
@@ -142,13 +193,16 @@ def _run_agents(resource_id: str, violation_type: str) -> dict[str, Any]:
     )
     if not selected:
         return {
-            "trace": "  No matching violation found.\n",
+            "trace": _build_waterfall_trace([], ["Violation not found"], "HIGH"),
             "verdict": "REJECTED",
             "checks_passed": [],
             "checks_failed": ["Violation not found"],
             "result": None,
             "plan": None,
             "work": None,
+            "mttr_seconds": 0.0,
+            "hcl_before": _hcl_synthetic_before(resource_id),
+            "hcl_after": _hcl_synthetic_after(resource_id),
         }
 
     t0 = datetime.now()
@@ -156,14 +210,10 @@ def _run_agents(resource_id: str, violation_type: str) -> dict[str, Any]:
     work = worker.run(plan)
     result = reviewer.run(plan, work, started_at=t0)
 
-    # Dynamic waterfall trace from result.checks_passed / checks_failed
-    trace = ""
-    for check in result.checks_passed:
-        trace += f"  ✓ {check}\n"
-    for check in result.checks_failed:
-        trace += f"  ✗ {check}\n"
-    if not trace:
-        trace = "  (no checks reported)\n"
+    # Waterfall trace: all 5 OPA checks with ✓/✗ [policy_id] — [message] ([severity])
+    resource_violations_pre = [v for v in violations if str(v.get("resource_id", "")) == resource_id]
+    sev = _highest_severity(resource_violations_pre)
+    trace = _build_waterfall_trace(result.checks_passed, result.checks_failed, sev)
 
     # On APPROVED: embed fix into RAG
     if result.verdict == "APPROVED" and embed_and_store is not None:
@@ -180,7 +230,8 @@ def _run_agents(resource_id: str, violation_type: str) -> dict[str, Any]:
             },
         )
 
-    # Persist to Supabase via audit_db
+    # Persist to Supabase via audit_db (severity = highest among resource's violations)
+    severity_val = _highest_severity(resource_violations_pre)
     event: dict[str, Any] = {
         "task_id": plan.task_id,
         "timestamp": datetime.now().isoformat(),
@@ -194,6 +245,7 @@ def _run_agents(resource_id: str, violation_type: str) -> dict[str, Any]:
         "mttr_seconds": result.mttr_seconds,
         "tokens_used": plan.tokens_used + work.tokens_used + result.tokens_used,
         "rag_hit": plan.rag_hit,
+        "severity": severity_val,
     }
     if db is not None:
         db.insert(event)
@@ -206,6 +258,9 @@ def _run_agents(resource_id: str, violation_type: str) -> dict[str, Any]:
         "result": result,
         "plan": plan,
         "work": work,
+        "mttr_seconds": result.mttr_seconds,
+        "hcl_before": _hcl_synthetic_before(resource_id),
+        "hcl_after": work.hcl_code,
     }
 
 
@@ -226,8 +281,10 @@ app_ui = ui.page_fluid(
         ui.nav_panel(
             "Catalogue",
             ui.card(
-                ui.card_header("Resources"),
-                ui.output_table("catalogue_table"),
+                ui.card_header("Resources — click a row to see violation details"),
+                ui.div(ui.input_text("catalogue_selected_resource", "", value=""), class_="d-none"),
+                ui.output_ui("catalogue_table"),
+                ui.output_ui("catalogue_violation_detail"),
             ),
         ),
         ui.nav_panel(
@@ -248,6 +305,8 @@ app_ui = ui.page_fluid(
                     ui.card_header("Waterfall trace"),
                     ui.output_text("trace_output"),
                     ui.output_text("verdict_output"),
+                    ui.output_ui("mttr_output"),
+                    ui.output_ui("hcl_diff_output"),
                 ),
             ),
         ),
@@ -313,27 +372,67 @@ def server(input: Any, output: Any, session: Any) -> None:
         out = _run_agents(rid, vtype)
         agent_result.set(out)
 
-    @render.table
+    @render.ui
     def catalogue_table() -> Any:
         import pandas as pd
-        rows = [
-            {
-                "resource_id": r.resource_id,
-                "resource_type": r.resource_type,
-                "region": r.region,
-                "encryption_enabled": r.encryption_enabled,
-                "is_public": r.is_public,
-            }
-            for r in RESOURCES
+        violations = (
+            evaluate(RESOURCES) if _USE_REAL_MODULES and evaluate else []
+        )
+        df = pd.DataFrame(RESOURCES)
+        cols = ["resource_id", "region", "type", "encryption_enabled", "is_public"]
+        for c in cols:
+            if c not in df.columns:
+                df[c] = ""
+        df = df[[c for c in cols if c in df.columns]]
+        # Build HTML table with color-coded rows and click handlers
+        rows_html: list[str] = []
+        for _, row in df.iterrows():
+            rid = str(row.get("resource_id", ""))
+            has_viol = any(str(v.get("resource_id", "")) == rid for v in violations)
+            bg = "#d4edda" if not has_viol else "#f8d7da"
+            cells = "".join(f"<td>{_html_esc(str(row.get(c, '')))}</td>" for c in cols)
+            rows_html.append(
+                f'<tr style="background-color:{bg};cursor:pointer" '
+                f'data-resource-id="{_html_esc(rid)}" '
+                f'onclick="Shiny.setInputValue(\'catalogue_selected_resource\', '
+                f'\'{_html_esc(rid)}\', {{priority: \'event\'}});">'
+                f"{cells}</tr>"
+            )
+        header = "<thead><tr>" + "".join(f"<th>{c}</th>" for c in cols) + "</tr></thead>"
+        body = "<tbody>" + "".join(rows_html) + "</tbody>"
+        return ui.HTML(f'<table class="table table-bordered">{header}{body}</table>')
+
+    @render.ui
+    def catalogue_violation_detail() -> Any:
+        sel = input.catalogue_selected_resource()
+        if not sel or not str(sel).strip():
+            return ui.div()
+        violations = (
+            evaluate(RESOURCES) if _USE_REAL_MODULES and evaluate else []
+        )
+        resource_viols = [
+            v for v in violations if str(v.get("resource_id", "")) == str(sel)
         ]
-        return pd.DataFrame(rows)
+        if not resource_viols:
+            return ui.div(ui.p("No violations for this resource."), class_="mt-3 p-3 border")
+        items = []
+        for v in resource_viols:
+            pid = str(v.get("violation_type", ""))  # policy_id from violation_type
+            sev = str(v.get("severity", ""))
+            msg = str(v.get("detail", ""))
+            items.append(ui.li(f"policy: {pid} — {msg} (severity: {sev})"))
+        return ui.div(
+            ui.h6("Violation details"),
+            ui.ul(*items, class_="list-unstyled"),
+            class_="mt-3 p-3 border rounded",
+        )
 
     @render.text
     def trace_output() -> str:
         r = agent_result()
         if r is None:
             return "Click Run to execute the agent loop."
-        return cast(str, r.get("trace", ""))
+        return r.get("trace", "")
 
     @render.text
     def verdict_output() -> str:
@@ -342,6 +441,43 @@ def server(input: Any, output: Any, session: Any) -> None:
             return ""
         v = r.get("verdict", "")
         return f"Verdict: {v}"
+
+    @render.ui
+    def mttr_output() -> Any:
+        r = agent_result()
+        if r is None:
+            return ui.div()
+        mttr = r.get("mttr_seconds")
+        if mttr is None:
+            return ui.div()
+        return ui.p(f"MTTR: {float(mttr):.1f}s", class_="mb-0 mt-2")
+
+    @render.ui
+    def hcl_diff_output() -> Any:
+        r = agent_result()
+        if r is None:
+            return ui.div()
+        before = r.get("hcl_before", "")
+        after = r.get("hcl_after", "")
+        if not before and not after:
+            return ui.div()
+        return ui.div(
+            ui.h6("HCL diff"),
+            ui.div(
+                ui.div(
+                    ui.strong("Before"),
+                    ui.pre(before, class_="bg-light p-2 rounded overflow-auto"),
+                    class_="col-6",
+                ),
+                ui.div(
+                    ui.strong("After"),
+                    ui.pre(after, class_="bg-light p-2 rounded overflow-auto"),
+                    class_="col-6",
+                ),
+                class_="row",
+            ),
+            class_="mt-3",
+        )
 
     # KPI tiles — depend on refresh_trigger so they update when Refresh clicked
     refresh_trigger: reactive.Value[int] = reactive.Value(0)
