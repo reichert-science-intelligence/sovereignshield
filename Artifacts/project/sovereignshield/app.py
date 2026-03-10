@@ -36,10 +36,55 @@ try:
 except ImportError:
     raise ImportError("shiny is required. Run: pip install shiny")
 
-# Synthetic RESOURCES catalogue — keep exactly as-is
-RESOURCES: list[dict[str, Any]] = [
-    {"resource_id": "s3-staging-analytics", "region": "eu-west-1", "type": "s3"},
-    {"resource_id": "ec2-prod-api", "region": "us-east-1", "type": "ec2"},
+from project.sovereignshield.models import CloudResource
+
+# Full 5-resource catalogue
+RESOURCES: list[CloudResource] = [
+    CloudResource(
+        resource_id="s3-phi-claims-001",
+        resource_type="aws_s3_bucket",
+        region="us-east-1",
+        encryption_enabled=True,
+        cmk_key_id="arn:aws:kms:us-east-1:123456789:key/abc-001",
+        is_public=False,
+        tags={"DataClass": "PHI", "Environment": "prod"},
+    ),
+    CloudResource(
+        resource_id="s3-staging-analytics",
+        resource_type="aws_s3_bucket",
+        region="eu-central-1",
+        encryption_enabled=False,
+        cmk_key_id=None,
+        is_public=False,
+        tags={"Environment": "staging"},
+    ),
+    CloudResource(
+        resource_id="rds-member-records",
+        resource_type="aws_db_instance",
+        region="us-east-1",
+        encryption_enabled=True,
+        cmk_key_id="arn:aws:kms:us-east-1:123456789:key/abc-002",
+        is_public=False,
+        tags={"DataClass": "PHI", "Environment": "prod"},
+    ),
+    CloudResource(
+        resource_id="rds-dev-sandbox",
+        resource_type="aws_db_instance",
+        region="us-west-2",
+        encryption_enabled=False,
+        cmk_key_id=None,
+        is_public=True,
+        tags={"Environment": "dev"},
+    ),
+    CloudResource(
+        resource_id="lambda-eligibility",
+        resource_type="aws_lambda_function",
+        region="us-east-1",
+        encryption_enabled=True,
+        cmk_key_id="arn:aws:kms:us-east-1:123456789:key/abc-003",
+        is_public=False,
+        tags={"DataClass": "PHI", "Environment": "prod"},
+    ),
 ]
 
 # Seed events for System Intelligence fallback when db is unavailable
@@ -270,8 +315,17 @@ def server(input: Any, output: Any, session: Any) -> None:
     @render.table
     def catalogue_table() -> Any:
         import pandas as pd
-        df = pd.DataFrame(RESOURCES)
-        return df
+        rows = [
+            {
+                "resource_id": r.resource_id,
+                "resource_type": r.resource_type,
+                "region": r.region,
+                "encryption_enabled": r.encryption_enabled,
+                "is_public": r.is_public,
+            }
+            for r in RESOURCES
+        ]
+        return pd.DataFrame(rows)
 
     @render.text
     def trace_output() -> str:

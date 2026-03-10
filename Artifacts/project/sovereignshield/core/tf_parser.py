@@ -6,23 +6,23 @@ import json
 from pathlib import Path
 from typing import Any
 
-from app import CloudResource
+from project.sovereignshield.models import LegacyCloudResource
 
 
-def parse_tfstate(path: str) -> list[CloudResource]:
+def parse_tfstate(path: str) -> list[LegacyCloudResource]:
     """Load .tfstate from file path and parse into CloudResource list."""
     content = Path(path).read_text(encoding="utf-8")
     state: dict[str, Any] = json.loads(content)
     return parse_tfstate_dict(state)
 
 
-def parse_tfstate_dict(state: dict[str, Any]) -> list[CloudResource]:
+def parse_tfstate_dict(state: dict[str, Any]) -> list[LegacyCloudResource]:
     """Parse a Terraform state dict into a list of CloudResource objects.
 
     Handles Terraform state v3/v4 format. Iterates resources[], then instances[]
     within each resource. Missing keys use sensible defaults.
     """
-    result: list[CloudResource] = []
+    result: list[LegacyCloudResource] = []
     resources: list[dict[str, Any]] = state.get("resources") or []
 
     for resource in resources:
@@ -44,7 +44,7 @@ def parse_tfstate_dict(state: dict[str, Any]) -> list[CloudResource]:
                     instance_name = f"{res_name}[{idx}]"
 
             result.append(
-                CloudResource(
+                LegacyCloudResource(
                     type=res_type,
                     name=instance_name,
                     attributes=attributes,

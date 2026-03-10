@@ -1,4 +1,4 @@
-# SovereignShield CI — lint, type-check, pytest
+# SovereignShield CI — lint, typecheck, test, security
 name: CI
 
 on:
@@ -21,14 +21,18 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install ruff mypy pytest
-          pip install -e ".[dev]" 2>/dev/null || pip install -e .
+          pip install ruff mypy pytest pytest-cov pip-audit
+          pip install -e ".[dev]" 2>/dev/null || pip install -r Artifacts/project/sovereignshield/requirements.txt
+          pip install chromadb sentence-transformers pandas 2>/dev/null || true
 
       - name: Ruff lint
-        run: ruff check . --config pyproject.toml
+        run: ruff check Artifacts/project/sovereignshield/
 
-      - name: Mypy type-check
-        run: mypy app.py --config-file pyproject.toml
+      - name: Mypy typecheck
+        run: PYTHONPATH=Artifacts mypy Artifacts/project/sovereignshield/ --strict --ignore-missing-imports
 
       - name: Pytest
-        run: pytest Artifacts/project/sovereignshield/tests/ -v --tb=short
+        run: PYTHONPATH=Artifacts pytest Artifacts/project/sovereignshield/tests/ -v --tb=short --cov=project.sovereignshield --cov-report=term-missing
+
+      - name: Security audit
+        run: pip-audit
