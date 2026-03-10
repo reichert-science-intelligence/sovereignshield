@@ -134,6 +134,6 @@ def kb_count() -> int:
     if _collection is None:
         return 0
     try:
-        return _collection.count()
+        return cast(int, _collection.count())
     except Exception:
         return 0
