@@ -239,13 +239,15 @@ _PORTFOLIO_APPS: list[_PortfolioApp] = [
 
 
 def _load_avatar() -> str:
-    """Load avatar.png from assets as base64 data URI."""
+    """Load avatar from assets/avatar.b64.txt as data URI."""
     try:
         assets_dir = os.path.join(os.path.dirname(__file__), "assets")
-        path = os.path.join(assets_dir, "avatar.png")
-        with open(path, "rb") as f:
-            data = base64.b64encode(f.read()).decode()
-        return f"data:image/png;base64,{data}"
+        path = os.path.join(assets_dir, "avatar.b64.txt")
+        with open(path, "r") as f:
+            data = f.read().strip().replace("\n", "").replace("\r", "")
+        if not data.startswith("data:"):
+            data = f"data:image/png;base64,{data}"
+        return data
     except Exception:
         return ""
 
