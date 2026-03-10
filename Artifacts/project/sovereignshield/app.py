@@ -4,8 +4,10 @@ Real agent loop: OPA evaluate → Planner → Worker → Reviewer → RAG/Supaba
 """
 from __future__ import annotations
 
+import base64
 import os
 import sys
+from dataclasses import dataclass
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
@@ -220,6 +222,51 @@ _CSS = """
 """
 
 
+@dataclass
+class _PortfolioApp:
+    name: str
+    description: str
+    url: str
+    qr_file: str
+
+
+_PORTFOLIO_APPS: list[_PortfolioApp] = [
+    _PortfolioApp("AuditShield Live", "RADV Audit Defense Platform", "https://huggingface.co/spaces/rreichert/auditshield-live", "QR_AuditShield_Live.b64.txt"),
+    _PortfolioApp("StarGuard Desktop", "MA Intelligence Platform", "https://rreichert-starguard-desktop.hf.space", "QR_-Landing.b64.txt"),
+    _PortfolioApp("StarGuard Mobile", "MA Intelligence on Mobile", "https://rreichert-starguardai.hf.space", "QR_Mobile_Tiny_Sized.b64.txt"),
+    _PortfolioApp("SovereignShield Mobile", "Sovereign Cloud Compliance", "https://rreichert-sovereignshield-mobile.hf.space", "QR_Mobile_Tiny_Sized.b64.txt"),
+]
+
+
+def _load_avatar() -> str:
+    """Load avatar.png from assets as base64 data URI."""
+    try:
+        assets_dir = os.path.join(os.path.dirname(__file__), "assets")
+        path = os.path.join(assets_dir, "avatar.png")
+        with open(path, "rb") as f:
+            data = base64.b64encode(f.read()).decode()
+        return f"data:image/png;base64,{data}"
+    except Exception:
+        return ""
+
+
+_AVATAR_SRC: str = _load_avatar()
+
+
+def _load_qr(filename: str) -> str:
+    """Load base64 PNG from assets/*.b64.txt. Handles whitespace, newlines, data URI prefix."""
+    try:
+        assets_dir = os.path.join(os.path.dirname(__file__), "assets")
+        path = os.path.join(assets_dir, filename)
+        with open(path, "r") as f:
+            data = f.read().strip().replace("\n", "").replace("\r", "")
+        if not data.startswith("data:"):
+            data = f"data:image/png;base64,{data}"
+        return data
+    except Exception:
+        return ""
+
+
 def _footer() -> Any:
     """Synthetic data disclaimer footer for all tabs."""
     return ui.div(
@@ -288,8 +335,87 @@ app_ui = ui.page_fluid(
             ),
             _footer(),
         ),
+        ui.nav_panel(
+            "About",
+            _about_ui(),
+        ),
     ),
 )
+
+
+def _about_ui() -> Any:
+    """Tab 4: About + Services — matches mobile content."""
+    return ui.div(
+        ui.card(
+            ui.card_header("Robert Reichert"),
+            (
+                ui.div(
+                    ui.tags.img(
+                        src=_AVATAR_SRC,
+                        style="width:96px;height:96px;border-radius:50%;object-fit:cover;"
+                              "object-position:center top;border:3px solid #4A3E8F;"
+                              "display:block;margin:0 auto 12px auto;",
+                    ),
+                    style="text-align: center;",
+                )
+                if _AVATAR_SRC
+                else ui.div("RR", style="width:72px;height:72px;border-radius:50%;background:#4A3E8F;color:white;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:1.5rem;margin:0 auto 12px;")
+            ),
+            ui.p("Principal, Sovereign Cloud & AI", style="text-align: center; color: #666; margin-bottom: 8px;"),
+            ui.div(
+                ui.span("Cloud Compliance", class_="badge bg-secondary", style="margin: 4px;"),
+                ui.span("Agentic AI", class_="badge bg-secondary", style="margin: 4px;"),
+                ui.span("Healthcare Analytics", class_="badge bg-secondary", style="margin: 4px;"),
+                style="display: flex; flex-wrap: wrap; justify-content: center; gap: 4px; margin-bottom: 12px;",
+            ),
+            ui.div(
+                ui.a("reichert.starguardai@email.com", href="mailto:reichert.starguardai@email.com", style="margin: 0 8px;"),
+                ui.a("LinkedIn", href="https://www.linkedin.com/in/robertreichert-healthcareai/", style="margin: 0 8px;"),
+                ui.span("+1 (555) 123-4567", style="margin: 0 8px;"),
+                style="text-align: center; font-size: 14px; margin-bottom: 12px;",
+            ),
+            ui.div("Available March 2026", style="display: inline-block; background: #D4AF37; color: black; padding: 8px 12px; border-radius: 999px; font-weight: 600; text-align: center;"),
+        ),
+        ui.h5("Portfolio Apps", style="margin-top: 16px; margin-bottom: 12px;"),
+        ui.div(
+            *[
+                ui.card(
+                    ui.div(app.name, style="font-weight: 600; margin-bottom: 4px;"),
+                    ui.div(app.description, style="font-size: 13px; color: #666; margin-bottom: 4px;"),
+                    ui.a(app.url, href=app.url, target="_blank", style="font-size: 12px; margin-bottom: 8px; display: block;"),
+                    ui.tags.img(src=_load_qr(app.qr_file), style="height: 80px; width: 80px;", alt=app.name) if _load_qr(app.qr_file) else ui.span("(QR)", style="font-size: 12px; color: #999;"),
+                    style="margin-bottom: 12px;",
+                )
+                for app in _PORTFOLIO_APPS
+            ],
+        ),
+        ui.h5("Services", style="margin-top: 24px; margin-bottom: 12px;"),
+        ui.accordion(
+            ui.accordion_panel(
+                "Sovereign Cloud Compliance Audit — $150/hr",
+                ui.p("HIPAA-compliant cloud resource audit with OPA policy evaluation and Terraform remediation."),
+                ui.tags.ul(ui.tags.li("Policy-as-code review"), ui.tags.li("Violation report"), ui.tags.li("Terraform fix generation")),
+                ui.p("Typical engagement: 2–4 weeks", style="margin-top: 8px;"),
+            ),
+            ui.accordion_panel(
+                "Agentic AI System Design — $125/hr",
+                ui.p("Design and implement agentic workflows (Planner → Worker → Reviewer) for compliance and automation."),
+                ui.tags.ul(ui.tags.li("Architecture design"), ui.tags.li("RAG integration"), ui.tags.li("Claude API integration")),
+                ui.p("Typical engagement: 4–8 weeks", style="margin-top: 8px;"),
+            ),
+            ui.accordion_panel(
+                "HEDIS/RADV Analytics Consulting — $100/hr",
+                ui.p("Healthcare quality measure analytics, RADV exposure scoring, and star rating optimization."),
+                ui.tags.ul(ui.tags.li("HEDIS measure analysis"), ui.tags.li("RADV scenario modeling"), ui.tags.li("ROI projections")),
+                ui.p("Typical engagement: 2–6 weeks", style="margin-top: 8px;"),
+            ),
+        ),
+        ui.div(
+            ui.a("Contact: reichert.starguardai@email.com", href="mailto:reichert.starguardai@email.com",
+                class_="btn btn-warning", style="width: 100%; margin-top: 16px; display: block; text-align: center; text-decoration: none; background: #D4AF37; color: black; font-weight: bold; border: none;"),
+        ),
+        _footer(),
+    )
 
 
 def server(input: Any, output: Any, session: Any) -> None:
