@@ -7,7 +7,27 @@ from __future__ import annotations
 import base64
 import io
 from datetime import datetime
+from pathlib import Path
 from typing import Any, Callable, cast
+
+# Brand colors: Purple #4A3E8F, Gold #D4AF37, Green #10b981
+_BRAND_PURPLE = "#4A3E8F"
+_BRAND_GOLD = "#D4AF37"
+_BRAND_GREEN = "#10b981"
+
+
+def _load_qr_b64(filename: str) -> str:
+    """Load base64-encoded PNG from assets/*.b64.txt. Returns empty string if not found."""
+    try:
+        base_dir = Path(__file__).resolve().parent
+        assets_dir = base_dir / "assets"
+        filepath = assets_dir / filename
+        if filepath.is_file():
+            content = filepath.read_text(encoding="utf-8")
+            return content.strip()
+        return ""
+    except Exception:
+        return ""
 
 # Graceful import fallback — run with simulated data if any module fails
 _USE_REAL_MODULES = True
@@ -303,11 +323,14 @@ def _run_agents(resource_id: str, violation_type: str) -> dict[str, Any]:
 # ── UI ──────────────────────────────────────────────────────────────────────
 
 _CSS = """
+:root { --brand-purple: #4A3E8F; --brand-gold: #D4AF37; --brand-green: #10b981; }
 .metric-card { padding: 16px; border-radius: 8px; margin-bottom: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.08); background: #f8f9fa; }
 .trace-box { font-family: ui-monospace, monospace; font-size: 13px; white-space: pre-wrap; background: #1e1e1e; color: #d4d4d4; padding: 12px; border-radius: 6px; }
 .verdict-approved { color: #28a745; font-weight: bold; }
 .verdict-revision { color: #ffc107; font-weight: bold; }
 .verdict-rejected { color: #dc3545; font-weight: bold; }
+.about-card { border-left: 4px solid var(--brand-purple); background: #f8f9fa; }
+.services-card { border-left: 4px solid var(--brand-gold); }
 """
 
 app_ui = ui.page_fluid(
@@ -392,6 +415,14 @@ app_ui = ui.page_fluid(
                     ui.column(6, ui.output_ui("analytics_chart_kb")),
                 ),
             ),
+        ),
+        ui.nav_panel(
+            "About",
+            ui.output_ui("about_panel"),
+        ),
+        ui.nav_panel(
+            "Services",
+            ui.output_ui("services_panel"),
         ),
     ),
 )
@@ -832,6 +863,207 @@ def server(input: Any, output: Any, session: Any) -> None:
             return
         df = pd.DataFrame(rows)
         yield df.to_csv(index=False)
+
+    # ── About tab ─────────────────────────────────────────────────────────────
+
+    @render.ui
+    def about_panel() -> Any:
+        def _qr_img(filename: str, alt: str) -> Any:
+            b64 = _load_qr_b64(filename)
+            if b64:
+                return ui.tags.img(
+                    src=f"data:image/png;base64,{b64}",
+                    alt=alt,
+                    style="max-width:120px; height:auto;",
+                )
+            return ui.span("QR", class_="text-muted small")
+
+        return ui.div(
+            ui.div(
+                ui.div(
+                    ui.tags.div("RR", style=f"width:80px;height:80px;border-radius:50%;background:{_BRAND_PURPLE};color:white;display:flex;align-items:center;justify-content:center;font-weight:bold;font-size:24px;"),
+                    ui.h4("Robert Reichert", style=f"color:{_BRAND_PURPLE}; margin-top:12px;"),
+                    ui.p("Healthcare Data Scientist & AI Architect", class_="text-muted mb-1"),
+                    ui.p("Sovereign Compliance. Automated. Auditable.", style=f"color:{_BRAND_GREEN}; font-weight:500;"),
+                    class_="text-center mb-4",
+                ),
+                class_="col-12",
+            ),
+            ui.row(
+                ui.column(
+                    4,
+                    ui.card(
+                        ui.card_header("Cloud Compliance Automation"),
+                        ui.card_body(
+                            "OPA policy enforcement, HIPAA §164.312 controls, "
+                            "FedRAMP-ready infrastructure validation",
+                        ),
+                        class_="about-card mb-3",
+                    ),
+                ),
+                ui.column(
+                    4,
+                    ui.card(
+                        ui.card_header("Agentic AI Systems"),
+                        ui.card_body(
+                            "Compound AI loops: Planner → Worker → Reviewer with "
+                            "RAG-enhanced self-correction and Supabase audit trail",
+                        ),
+                        class_="about-card mb-3",
+                    ),
+                ),
+                ui.column(
+                    4,
+                    ui.card(
+                        ui.card_header("Healthcare Data Science"),
+                        ui.card_body(
+                            "22+ years Medicare Advantage analytics, $148M+ documented "
+                            "savings, HEDIS/RADV/Star Ratings expertise",
+                        ),
+                        class_="about-card mb-3",
+                    ),
+                ),
+            ),
+            ui.div(
+                ui.h6("Contact"),
+                ui.p("Email: reichert.starguardai@email.com"),
+                ui.p("LinkedIn: linkedin.com/in/robertreichert"),
+                ui.p("Phone: 480-767-1337"),
+                ui.p("Available: April 2026 | Contract | Remote", style=f"color:{_BRAND_GREEN};"),
+                class_="mb-4 p-3 rounded", style=f"background:#f8f9fa; border-left:4px solid {_BRAND_PURPLE};",
+            ),
+            ui.h6("Portfolio Apps"),
+            ui.row(
+                ui.column(
+                    6,
+                    ui.card(
+                        ui.card_header("AuditShield Live"),
+                        ui.card_body(
+                            ui.p("HEDIS/RADV Chart Audit — Agentic RAG + Claude"),
+                            ui.a("https://rreichert-auditshield-live.hf.space", href="https://rreichert-auditshield-live.hf.space", target="_blank"),
+                            ui.div(_qr_img("QR_AuditShield_Live.b64.txt", "AuditShield QR"), class_="mt-2"),
+                        ),
+                        class_="services-card mb-3",
+                    ),
+                ),
+                ui.column(
+                    6,
+                    ui.card(
+                        ui.card_header("StarGuard Desktop"),
+                        ui.card_body(
+                            ui.p("Star Ratings Forecasting — Compound AI"),
+                            ui.a("https://rreichert-starguard-desktop.hf.space", href="https://rreichert-starguard-desktop.hf.space", target="_blank"),
+                            ui.div(_qr_img("QR_-Landing.b64.txt", "StarGuard Desktop QR"), class_="mt-2"),
+                        ),
+                        class_="services-card mb-3",
+                    ),
+                ),
+                ui.column(
+                    6,
+                    ui.card(
+                        ui.card_header("StarGuard Mobile"),
+                        ui.card_body(
+                            ui.p("Mobile Analytics — Field Operations"),
+                            ui.a("https://rreichert-starguardai.hf.space", href="https://rreichert-starguardai.hf.space", target="_blank"),
+                            ui.div(_qr_img("QR_Mobile_Tiny_Sized.b64.txt", "StarGuard Mobile QR"), class_="mt-2"),
+                        ),
+                        class_="services-card mb-3",
+                    ),
+                ),
+                ui.column(
+                    6,
+                    ui.card(
+                        ui.card_header("SovereignShield Mobile"),
+                        ui.card_body(
+                            ui.p("Compliance Remediation — Mobile (coming soon)"),
+                            ui.span("Mobile version coming soon", style=f"color:{_BRAND_GOLD};"),
+                        ),
+                        class_="services-card mb-3",
+                    ),
+                ),
+            ),
+            class_="container py-3",
+        )
+
+    # ── Services tab ──────────────────────────────────────────────────────────
+
+    @render.ui
+    def services_panel() -> Any:
+        return ui.div(
+            ui.row(
+                ui.column(
+                    4,
+                    ui.card(
+                        ui.card_header("Sovereign Cloud Compliance Audit — $150/hr"),
+                        ui.card_body(
+                        ui.p(
+                            "End-to-end OPA policy evaluation of your AWS/Azure "
+                            "infrastructure against HIPAA, FedRAMP, and CMS requirements",
+                            ),
+                            ui.strong("Deliverables:"),
+                            ui.tags.ul(
+                                ui.tags.li("Terraform state analysis and violation report"),
+                                ui.tags.li("Prioritized remediation plan (HIGH/MEDIUM/LOW)"),
+                                ui.tags.li("HIPAA §164.312 compliance scorecard"),
+                            ),
+                            ui.p("Engagement: 2–4 weeks", class_="text-muted mt-2 mb-0"),
+                        ),
+                        class_="services-card mb-3",
+                    ),
+                ),
+                ui.column(
+                    4,
+                    ui.card(
+                        ui.card_header("Agentic AI System Design — $125/hr"),
+                        ui.card_body(
+                            ui.p(
+                                "Architecture and implementation of Compound AI systems with "
+                                "Planner/Worker/Reviewer loops, RAG retrieval, and audit-trail persistence",
+                            ),
+                            ui.strong("Deliverables:"),
+                            ui.tags.ul(
+                                ui.tags.li("System architecture document"),
+                                ui.tags.li("Working prototype with Claude API integration"),
+                                ui.tags.li("ChromaDB knowledge base seeded with your domain content"),
+                            ),
+                            ui.p("Engagement: 4–8 weeks", class_="text-muted mt-2 mb-0"),
+                        ),
+                        class_="services-card mb-3",
+                    ),
+                ),
+                ui.column(
+                    4,
+                    ui.card(
+                        ui.card_header("HEDIS/RADV Analytics Consulting — $100/hr"),
+                        ui.card_body(
+                            ui.p(
+                                "Medicare Advantage analytics from gap closure to RADV audit "
+                                "defense, with AI-assisted chart review",
+                            ),
+                            ui.strong("Deliverables:"),
+                            ui.tags.ul(
+                                ui.tags.li("HEDIS measure gap analysis"),
+                                ui.tags.li("RADV audit defense documentation"),
+                                ui.tags.li("Star Ratings forecast model"),
+                            ),
+                            ui.p("Engagement: Ongoing", class_="text-muted mt-2 mb-0"),
+                        ),
+                        class_="services-card mb-3",
+                    ),
+                ),
+            ),
+            ui.div(
+                ui.p("Available April 2026 | Contract | Remote", class_="mb-2"),
+                ui.input_action_button(
+                    "contact_btn",
+                    "Contact: reichert.starguardai@email.com",
+                    class_="btn",
+                    style=f"background-color:{_BRAND_GOLD}; color:#000;",
+                ),
+                class_="text-center mt-4 p-3",
+            ),
+            class_="container py-3",
+        )
 
 
 app = App(app_ui, server, debug=True)
