@@ -9,7 +9,7 @@ import re
 import uuid
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Callable, Literal, Optional
 
 from dotenv import load_dotenv
 
@@ -26,11 +26,12 @@ for _p in _env_candidates:
         load_dotenv(dotenv_path=_p)
 
 # RAG: guard with try/except — rag/retriever.py doesn't exist until Chat 7
+retrieve_similar: Optional[Callable[..., tuple[str | None, float]]] = None
 try:
-    from ..rag.retriever import retrieve_similar  # type: ignore
+    from ..rag.retriever import retrieve_similar as _retrieve_similar
+    retrieve_similar = _retrieve_similar
     _RAG_AVAILABLE = True
 except ImportError:
-    retrieve_similar = None
     _RAG_AVAILABLE = False
 
 

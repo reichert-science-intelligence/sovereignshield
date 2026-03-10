@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import os
 import tempfile
-from typing import Any
+from typing import Any, Optional, cast
 from uuid import uuid4
 
 _COLLECTION_NAME: str = "sovereign_compliance_kb"
@@ -16,20 +16,24 @@ _PERSIST_DIR: str = (
     if os.name != "nt"
     else os.path.join(tempfile.gettempdir(), "chroma_db")
 )
-_collection: Any = None
+_collection: Optional[Any] = None
 
+chromadb: Optional[Any] = None
+embedding_functions: Optional[Any] = None
 try:
-    import chromadb  # type: ignore[import-not-found]
-    from chromadb.utils import embedding_functions  # type: ignore[import-not-found]
+    import chromadb as _chromadb
+    from chromadb.utils import embedding_functions as _ef_mod
 except ImportError:
-    chromadb = None
-    embedding_functions = None
+    pass
+else:
+    chromadb = _chromadb
+    embedding_functions = _ef_mod
 
 if chromadb is not None and embedding_functions is not None:
     try:
-        _ef = embedding_functions.SentenceTransformerEmbeddingFunction(
+        _ef = cast(Any, embedding_functions.SentenceTransformerEmbeddingFunction(
             model_name="all-MiniLM-L6-v2"
-        )
+        ))
         _client = chromadb.PersistentClient(path=_PERSIST_DIR)
         _collection = _client.get_or_create_collection(
             name=_COLLECTION_NAME,

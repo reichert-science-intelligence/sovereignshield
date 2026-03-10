@@ -10,7 +10,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 from datetime import datetime
-from typing import Any
+from typing import Any, cast
 
 # Graceful import fallback — run with simulated data if any module fails
 _USE_REAL_MODULES = True
@@ -23,13 +23,13 @@ try:
     from project.sovereignshield.rag.retriever import embed_and_store, retrieve_similar
 except ImportError:
     _USE_REAL_MODULES = False
-    evaluate = None  # type: ignore[assignment]
-    db = None  # type: ignore[assignment]
-    planner = None  # type: ignore[assignment]
-    worker = None  # type: ignore[assignment]
-    reviewer = None  # type: ignore[assignment]
-    embed_and_store = None  # type: ignore[assignment]
-    retrieve_similar = None  # type: ignore[assignment]
+    evaluate = None
+    db = None
+    planner = None
+    worker = None
+    reviewer = None
+    embed_and_store = None
+    retrieve_similar = None
 
 try:
     from shiny import App, reactive, render, ui
@@ -109,7 +109,8 @@ _SEED_EVENTS: list[dict[str, Any]] = [
 def _effective_log(limit: int = 10) -> list[dict[str, Any]]:
     """Fetch recent events: db.fetch_recent(limit) with local fallback to _SEED_EVENTS."""
     if _USE_REAL_MODULES and db is not None:
-        return db.fetch_recent(limit)
+        result = db.fetch_recent(limit)
+        return cast(list[dict[str, Any]], result)
     return list(_SEED_EVENTS)[:limit]
 
 
@@ -332,7 +333,7 @@ def server(input: Any, output: Any, session: Any) -> None:
         r = agent_result()
         if r is None:
             return "Click Run to execute the agent loop."
-        return r.get("trace", "")
+        return cast(str, r.get("trace", ""))
 
     @render.text
     def verdict_output() -> str:
