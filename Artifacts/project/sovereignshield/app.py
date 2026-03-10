@@ -4,76 +4,87 @@ Real agent loop: OPA evaluate → Planner → Worker → Reviewer → RAG/Supaba
 """
 from __future__ import annotations
 
-import base64
-import io
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+
 from datetime import datetime
-from pathlib import Path
-from typing import Any, Callable, cast
-
-# Brand colors: Purple #4A3E8F, Gold #D4AF37, Green #10b981
-_BRAND_PURPLE = "#4A3E8F"
-_BRAND_GOLD = "#D4AF37"
-_BRAND_GREEN = "#10b981"
-
-
-def _load_qr_b64(filename: str) -> str:
-    """Load base64-encoded PNG from assets/*.b64.txt. Returns empty string if not found."""
-    try:
-        base_dir = Path(__file__).resolve().parent
-        assets_dir = base_dir / "assets"
-        filepath = assets_dir / filename
-        if filepath.is_file():
-            content = filepath.read_text(encoding="utf-8")
-            return content.strip()
-        return ""
-    except Exception:
-        return ""
+from typing import Any, cast
 
 # Graceful import fallback — run with simulated data if any module fails
 _USE_REAL_MODULES = True
 try:
-    from .core.opa_eval import evaluate
-    from .core.audit_db import db
-    from .agents.planner import planner
-    from .agents.worker import worker
-    from .agents.reviewer import reviewer
-    from .rag.retriever import embed_and_store, kb_count, retrieve_similar
+    from project.sovereignshield.core.opa_eval import evaluate
+    from project.sovereignshield.core.audit_db import db
+    from project.sovereignshield.agents.planner import planner
+    from project.sovereignshield.agents.worker import worker
+    from project.sovereignshield.agents.reviewer import reviewer
+    from project.sovereignshield.rag.retriever import embed_and_store, retrieve_similar
 except ImportError:
     _USE_REAL_MODULES = False
-    evaluate = None  # type: ignore[assignment]
-    db = None  # type: ignore[assignment]
-    planner = None  # type: ignore[assignment]
-    worker = None  # type: ignore[assignment]
-    reviewer = None  # type: ignore[assignment]
-    embed_and_store = None  # type: ignore[assignment]
-    kb_count = None  # type: ignore[assignment]
-    retrieve_similar = None  # type: ignore[assignment]
-
-_CHARTS_AVAILABLE = True
-try:
-    from .core import charts
-except ImportError:
-    _CHARTS_AVAILABLE = False
-    charts = None  # type: ignore[assignment]
+    evaluate = None
+    db = None
+    planner = None
+    worker = None
+    reviewer = None
+    embed_and_store = None
+    retrieve_similar = None
 
 try:
     from shiny import App, reactive, render, ui
 except ImportError:
     raise ImportError("shiny is required. Run: pip install shiny")
 
-# Synthetic RESOURCES catalogue — 5 columns for Catalogue tab
-RESOURCES: list[dict[str, Any]] = [
-    {"resource_id": "s3-staging-analytics", "region": "eu-west-1", "type": "s3", "encryption_enabled": False, "is_public": True},
-    {"resource_id": "ec2-prod-api", "region": "us-east-1", "type": "ec2", "encryption_enabled": True, "is_public": False},
-]
+from project.sovereignshield.models import CloudResource
 
-# Canonical 5 OPA checks for waterfall trace: (policy_id, message)
-_OPA_CHECKS: list[tuple[str, str]] = [
-    ("approved_regions", "Approved regions: us-east-1, us-gov-east-1"),
-    ("cmk_encryption", "CMK encryption (aws:kms) required"),
-    ("phi_tag", "DataClass=PHI tag on all resources"),
-    ("is_public", "is_public must be False"),
-    ("data_residency", "data residency / region constraint"),
+# Full 5-resource catalogue
+RESOURCES: list[CloudResource] = [
+    CloudResource(
+        resource_id="s3-phi-claims-001",
+        resource_type="aws_s3_bucket",
+        region="us-east-1",
+        encryption_enabled=True,
+        cmk_key_id="arn:aws:kms:us-east-1:123456789:key/abc-001",
+        is_public=False,
+        tags={"DataClass": "PHI", "Environment": "prod"},
+    ),
+    CloudResource(
+        resource_id="s3-staging-analytics",
+        resource_type="aws_s3_bucket",
+        region="eu-central-1",
+        encryption_enabled=False,
+        cmk_key_id=None,
+        is_public=False,
+        tags={"Environment": "staging"},
+    ),
+    CloudResource(
+        resource_id="rds-member-records",
+        resource_type="aws_db_instance",
+        region="us-east-1",
+        encryption_enabled=True,
+        cmk_key_id="arn:aws:kms:us-east-1:123456789:key/abc-002",
+        is_public=False,
+        tags={"DataClass": "PHI", "Environment": "prod"},
+    ),
+    CloudResource(
+        resource_id="rds-dev-sandbox",
+        resource_type="aws_db_instance",
+        region="us-west-2",
+        encryption_enabled=False,
+        cmk_key_id=None,
+        is_public=True,
+        tags={"Environment": "dev"},
+    ),
+    CloudResource(
+        resource_id="lambda-eligibility",
+        resource_type="aws_lambda_function",
+        region="us-east-1",
+        encryption_enabled=True,
+        cmk_key_id="arn:aws:kms:us-east-1:123456789:key/abc-003",
+        is_public=False,
+        tags={"DataClass": "PHI", "Environment": "prod"},
+    ),
 ]
 
 # Seed events for System Intelligence fallback when db is unavailable
@@ -95,122 +106,12 @@ _SEED_EVENTS: list[dict[str, Any]] = [
 ]
 
 
-def _html_esc(s: str) -> str:
-    """Escape HTML special characters."""
-    return (
-        s.replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace('"', "&quot;")
-        .replace("'", "&#39;")
-    )
-
-
-def _hcl_synthetic_before(resource_id: str) -> str:
-    """Synthetic before (non-compliant) HCL per resource_id."""
-    blocks: dict[str, str] = {
-        "s3-staging-analytics": '''resource "aws_s3_bucket" "staging_analytics" {
-  bucket = "staging-analytics"
-  # Missing: server_side_encryption, region constraint
-}
-''',
-        "ec2-prod-api": '''resource "aws_instance" "prod_api" {
-  ami           = "ami-12345678"
-  instance_type = "t3.medium"
-  # Missing: PHI tag, encryption
-}
-''',
-    }
-    return blocks.get(resource_id, f'# No synthetic before for {resource_id}\n')
-
-
-def _hcl_synthetic_after(resource_id: str) -> str:
-    """Synthetic after (compliant) HCL per resource_id — used when no work output."""
-    blocks: dict[str, str] = {
-        "s3-staging-analytics": '''resource "aws_s3_bucket_server_side_encryption_configuration" "fix_staging" {
-  bucket = aws_s3_bucket.staging_analytics.id
-  rule {
-    apply_server_side_encryption_by_default {
-      sse_algorithm     = "aws:kms"
-      kms_master_key_id = aws_kms_key.main.arn
-    }
-  }
-}
-''',
-        "ec2-prod-api": '''resource "aws_instance" "prod_api" {
-  ami           = "ami-12345678"
-  instance_type = "t3.medium"
-  tags = {
-    DataClass = "PHI"
-  }
-}
-''',
-    }
-    return blocks.get(resource_id, f'# No synthetic after for {resource_id}\n')
-
-
-def _build_waterfall_trace(
-    checks_passed: list[str],
-    checks_failed: list[str],
-    violation_severity: str,
-) -> str:
-    """Build 5-line waterfall trace: ✓/✗ [policy_id] — [message] ([severity])."""
-    keywords: list[str] = ["region", "encryption", "phi", "public", "residency"]
-    lines: list[str] = []
-    for ((pid, msg), kw) in zip(_OPA_CHECKS, keywords, strict=True):
-        failed = any(kw in c.lower() for c in checks_failed)
-        if failed:
-            sym = "✗"
-            sev = violation_severity
-        else:
-            sym = "✓"
-            sev = "INFO"
-        lines.append(f"  {sym} [{pid}] — {msg} ({sev})")
-    return "\n".join(lines) + "\n"
-
-
-def _highest_severity(violations: list[dict[str, Any]]) -> str:
-    """Return highest severity among violations. HIGH > MEDIUM > LOW > INFO."""
-    order: dict[str, int] = {"HIGH": 4, "MEDIUM": 3, "LOW": 2, "INFO": 1}
-    best = "INFO"
-    for v in violations:
-        s = str(v.get("severity", "INFO")).upper().strip()
-        if order.get(s, 0) > order.get(best, 0):
-            best = s
-    return best
-
-
 def _effective_log(limit: int = 10) -> list[dict[str, Any]]:
     """Fetch recent events: db.fetch_recent(limit) with local fallback to _SEED_EVENTS."""
     if _USE_REAL_MODULES and db is not None:
-        return db.fetch_recent(limit)
+        result = db.fetch_recent(limit)
+        return cast(list[dict[str, Any]], result)
     return list(_SEED_EVENTS)[:limit]
-
-
-def _chart_to_base64_png(
-    chart_fn: Callable[..., Any],
-    runs: list[dict[str, Any]],
-    **kwargs: Any,
-) -> str:
-    """
-    Render a chart (compliance_heatmap, mttr_trend, violation_donut, kb_growth)
-    to a base64-encoded PNG for ui.img src.
-    """
-    if not _CHARTS_AVAILABLE or charts is None:
-        return ""
-    try:
-        import matplotlib.pyplot as mpl_plt
-
-        p = chart_fn(runs, **kwargs)
-        fig = p.draw()
-        buf: io.BytesIO = io.BytesIO()
-        fig.savefig(buf, format="png", bbox_inches="tight")
-        buf.seek(0)
-        enc = base64.b64encode(buf.read()).decode("ascii")
-        mpl_plt.close(fig)
-        return enc
-    except Exception:
-        return ""
 
 
 def _run_agents(resource_id: str, violation_type: str) -> dict[str, Any]:
@@ -219,22 +120,14 @@ def _run_agents(resource_id: str, violation_type: str) -> dict[str, Any]:
     Returns dict with trace, verdict, checks_passed, checks_failed, etc.
     """
     if not _USE_REAL_MODULES or evaluate is None or planner is None or worker is None or reviewer is None:
-        sim_trace = _build_waterfall_trace(
-            ["Region check", "CMK check"],
-            ["PHI DataClass tag missing"],
-            "HIGH",
-        )
         return {
-            "trace": sim_trace,
+            "trace": "  [Simulated] Region check: ✓\n  [Simulated] CMK check: ✓\n  [Simulated] PHI tag: ✗\n",
             "verdict": "NEEDS_REVISION",
             "checks_passed": ["Region check", "CMK check"],
             "checks_failed": ["PHI DataClass tag missing"],
             "result": None,
             "plan": None,
             "work": None,
-            "mttr_seconds": 2.5,
-            "hcl_before": _hcl_synthetic_before("s3-staging-analytics"),
-            "hcl_after": _hcl_synthetic_after("s3-staging-analytics"),
         }
 
     violations = evaluate(RESOURCES)
@@ -249,27 +142,28 @@ def _run_agents(resource_id: str, violation_type: str) -> dict[str, Any]:
     )
     if not selected:
         return {
-            "trace": _build_waterfall_trace([], ["Violation not found"], "HIGH"),
+            "trace": "  No matching violation found.\n",
             "verdict": "REJECTED",
             "checks_passed": [],
             "checks_failed": ["Violation not found"],
             "result": None,
             "plan": None,
             "work": None,
-            "mttr_seconds": 0.0,
-            "hcl_before": _hcl_synthetic_before(resource_id),
-            "hcl_after": _hcl_synthetic_after(resource_id),
         }
 
     t0 = datetime.now()
-    plan = planner.run(dict(selected))  # Violation TypedDict → dict for planner
+    plan = planner.run(selected)
     work = worker.run(plan)
     result = reviewer.run(plan, work, started_at=t0)
 
-    # Waterfall trace: all 5 OPA checks with ✓/✗ [policy_id] — [message] ([severity])
-    resource_violations_pre = [v for v in violations if str(v.get("resource_id", "")) == resource_id]
-    sev = _highest_severity(cast(list[dict[str, Any]], resource_violations_pre))
-    trace = _build_waterfall_trace(result.checks_passed, result.checks_failed, sev)
+    # Dynamic waterfall trace from result.checks_passed / checks_failed
+    trace = ""
+    for check in result.checks_passed:
+        trace += f"  ✓ {check}\n"
+    for check in result.checks_failed:
+        trace += f"  ✗ {check}\n"
+    if not trace:
+        trace = "  (no checks reported)\n"
 
     # On APPROVED: embed fix into RAG
     if result.verdict == "APPROVED" and embed_and_store is not None:
@@ -286,8 +180,7 @@ def _run_agents(resource_id: str, violation_type: str) -> dict[str, Any]:
             },
         )
 
-    # Persist to Supabase via audit_db (severity = highest among resource's violations)
-    severity_val = _highest_severity(cast("list[dict[str, Any]]", resource_violations_pre))
+    # Persist to Supabase via audit_db
     event: dict[str, Any] = {
         "task_id": plan.task_id,
         "timestamp": datetime.now().isoformat(),
@@ -301,7 +194,6 @@ def _run_agents(resource_id: str, violation_type: str) -> dict[str, Any]:
         "mttr_seconds": result.mttr_seconds,
         "tokens_used": plan.tokens_used + work.tokens_used + result.tokens_used,
         "rag_hit": plan.rag_hit,
-        "severity": severity_val,
     }
     if db is not None:
         db.insert(event)
@@ -314,24 +206,33 @@ def _run_agents(resource_id: str, violation_type: str) -> dict[str, Any]:
         "result": result,
         "plan": plan,
         "work": work,
-        "mttr_seconds": result.mttr_seconds,
-        "hcl_before": _hcl_synthetic_before(resource_id),
-        "hcl_after": work.hcl_code,
     }
 
 
 # ── UI ──────────────────────────────────────────────────────────────────────
 
 _CSS = """
-:root { --brand-purple: #4A3E8F; --brand-gold: #D4AF37; --brand-green: #10b981; }
 .metric-card { padding: 16px; border-radius: 8px; margin-bottom: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.08); background: #f8f9fa; }
 .trace-box { font-family: ui-monospace, monospace; font-size: 13px; white-space: pre-wrap; background: #1e1e1e; color: #d4d4d4; padding: 12px; border-radius: 6px; }
 .verdict-approved { color: #28a745; font-weight: bold; }
 .verdict-revision { color: #ffc107; font-weight: bold; }
 .verdict-rejected { color: #dc3545; font-weight: bold; }
-.about-card { border-left: 4px solid var(--brand-purple); background: #f8f9fa; }
-.services-card { border-left: 4px solid var(--brand-gold); }
 """
+
+
+def _footer() -> Any:
+    """Synthetic data disclaimer footer for all tabs."""
+    return ui.div(
+        ui.hr(style="margin: 24px 0 8px 0; border-color: #dee2e6;"),
+        ui.p(
+            "© 2026 Robert Reichert | Sovereign Cloud & AI. "
+            "All data shown is synthetic and generated for demonstration purposes only. "
+            "No real patient, member, or infrastructure data is used.",
+            style="font-size: 12px; color: #6c757d; text-align: center; padding: 16px; line-height: 1.5;",
+        ),
+        style="width: 100%;",
+    )
+
 
 app_ui = ui.page_fluid(
     ui.tags.head(ui.tags.style(_CSS)),
@@ -340,11 +241,10 @@ app_ui = ui.page_fluid(
         ui.nav_panel(
             "Catalogue",
             ui.card(
-                ui.card_header("Resources — click a row to see violation details"),
-                ui.div(ui.input_text("catalogue_selected_resource", "", value=""), class_="d-none"),
-                ui.output_ui("catalogue_table"),
-                ui.output_ui("catalogue_violation_detail"),
+                ui.card_header("Resources"),
+                ui.output_table("catalogue_table"),
             ),
+            _footer(),
         ),
         ui.nav_panel(
             "Agent Loop",
@@ -364,10 +264,9 @@ app_ui = ui.page_fluid(
                     ui.card_header("Waterfall trace"),
                     ui.output_text("trace_output"),
                     ui.output_text("verdict_output"),
-                    ui.output_ui("mttr_output"),
-                    ui.output_ui("hcl_diff_output"),
                 ),
             ),
+            _footer(),
         ),
         ui.nav_panel(
             "Intelligence",
@@ -382,47 +281,12 @@ app_ui = ui.page_fluid(
                     ui.column(4, ui.output_ui("kpi_rag")),
                     ui.column(4, ui.output_ui("kpi_kb")),
                 ),
-                ui.output_ui("intel_heatmap"),
-                ui.output_ui("intel_mttr_trend"),
-                ui.output_ui("intel_violation_donut"),
                 ui.card(
                     ui.card_header("Recent events"),
                     ui.output_table("intel_table"),
                 ),
             ),
-        ),
-        ui.nav_panel(
-            "Analytics",
-            ui.layout_sidebar(
-                ui.sidebar(
-                    ui.input_action_button("analytics_refresh_btn", "Refresh"),
-                    ui.download_button("analytics_csv_download", "Download Audit Log (CSV)"),
-                    title="Analytics",
-                    width=220,
-                ),
-                ui.row(
-                    ui.column(3, ui.output_ui("analytics_kpi_total")),
-                    ui.column(3, ui.output_ui("analytics_kpi_mttr")),
-                    ui.column(3, ui.output_ui("analytics_kpi_compliance")),
-                    ui.column(3, ui.output_ui("analytics_kpi_rag")),
-                ),
-                ui.row(
-                    ui.column(6, ui.output_ui("analytics_chart_heatmap")),
-                    ui.column(6, ui.output_ui("analytics_chart_mttr")),
-                ),
-                ui.row(
-                    ui.column(6, ui.output_ui("analytics_chart_donut")),
-                    ui.column(6, ui.output_ui("analytics_chart_kb")),
-                ),
-            ),
-        ),
-        ui.nav_panel(
-            "About",
-            ui.output_ui("about_panel"),
-        ),
-        ui.nav_panel(
-            "Services",
-            ui.output_ui("services_panel"),
+            _footer(),
         ),
     ),
 )
@@ -431,7 +295,7 @@ app_ui = ui.page_fluid(
 def server(input: Any, output: Any, session: Any) -> None:
     # Violation choices from evaluate(RESOURCES)
     violations = (
-        evaluate(RESOURCES) if _USE_REAL_MODULES and evaluate is not None else []
+        evaluate(RESOURCES) if _USE_REAL_MODULES and evaluate else []
     )
     if not violations:
         violations = [
@@ -439,8 +303,6 @@ def server(input: Any, output: Any, session: Any) -> None:
                 "resource_id": "s3-staging-analytics",
                 "violation_type": "data_residency",
                 "severity": "HIGH",
-                "regulation_cited": "",
-                "detail": "",
             }
         ]
     # Shiny select: value -> label (user sees label, gets value)
@@ -469,67 +331,27 @@ def server(input: Any, output: Any, session: Any) -> None:
         out = _run_agents(rid, vtype)
         agent_result.set(out)
 
-    @render.ui
+    @render.table
     def catalogue_table() -> Any:
         import pandas as pd
-        violations = (
-            evaluate(RESOURCES) if _USE_REAL_MODULES and evaluate is not None else []
-        )
-        df = pd.DataFrame(RESOURCES)
-        cols = ["resource_id", "region", "type", "encryption_enabled", "is_public"]
-        for c in cols:
-            if c not in df.columns:
-                df[c] = ""
-        df = df[[c for c in cols if c in df.columns]]
-        # Build HTML table with color-coded rows and click handlers
-        rows_html: list[str] = []
-        for _, row in df.iterrows():
-            rid = str(row.get("resource_id", ""))
-            has_viol = any(str(v.get("resource_id", "")) == rid for v in violations)
-            bg = "#d4edda" if not has_viol else "#f8d7da"
-            cells = "".join(f"<td>{_html_esc(str(row.get(c, '')))}</td>" for c in cols)
-            rows_html.append(
-                f'<tr style="background-color:{bg};cursor:pointer" '
-                f'data-resource-id="{_html_esc(rid)}" '
-                f'onclick="Shiny.setInputValue(\'catalogue_selected_resource\', '
-                f'\'{_html_esc(rid)}\', {{priority: \'event\'}});">'
-                f"{cells}</tr>"
-            )
-        header = "<thead><tr>" + "".join(f"<th>{c}</th>" for c in cols) + "</tr></thead>"
-        body = "<tbody>" + "".join(rows_html) + "</tbody>"
-        return ui.HTML(f'<table class="table table-bordered">{header}{body}</table>')
-
-    @render.ui
-    def catalogue_violation_detail() -> Any:
-        sel = input.catalogue_selected_resource()
-        if not sel or not str(sel).strip():
-            return ui.div()
-        violations = (
-            evaluate(RESOURCES) if _USE_REAL_MODULES and evaluate is not None else []
-        )
-        resource_viols = [
-            v for v in violations if str(v.get("resource_id", "")) == str(sel)
+        rows = [
+            {
+                "resource_id": r.resource_id,
+                "resource_type": r.resource_type,
+                "region": r.region,
+                "encryption_enabled": r.encryption_enabled,
+                "is_public": r.is_public,
+            }
+            for r in RESOURCES
         ]
-        if not resource_viols:
-            return ui.div(ui.p("No violations for this resource."), class_="mt-3 p-3 border")
-        items = []
-        for v in resource_viols:
-            pid = str(v.get("violation_type", ""))  # policy_id from violation_type
-            sev = str(v.get("severity", ""))
-            msg = str(v.get("detail", ""))
-            items.append(ui.tags.li(f"policy: {pid} — {msg} (severity: {sev})"))
-        return ui.div(
-            ui.h6("Violation details"),
-            ui.tags.ul(*items, class_="list-unstyled"),
-            class_="mt-3 p-3 border rounded",
-        )
+        return pd.DataFrame(rows)
 
     @render.text
     def trace_output() -> str:
         r = agent_result()
         if r is None:
             return "Click Run to execute the agent loop."
-        return str(r.get("trace", ""))
+        return cast(str, r.get("trace", ""))
 
     @render.text
     def verdict_output() -> str:
@@ -538,43 +360,6 @@ def server(input: Any, output: Any, session: Any) -> None:
             return ""
         v = r.get("verdict", "")
         return f"Verdict: {v}"
-
-    @render.ui
-    def mttr_output() -> Any:
-        r = agent_result()
-        if r is None:
-            return ui.div()
-        mttr = r.get("mttr_seconds")
-        if mttr is None:
-            return ui.div()
-        return ui.p(f"MTTR: {float(mttr):.1f}s", class_="mb-0 mt-2")
-
-    @render.ui
-    def hcl_diff_output() -> Any:
-        r = agent_result()
-        if r is None:
-            return ui.div()
-        before = r.get("hcl_before", "")
-        after = r.get("hcl_after", "")
-        if not before and not after:
-            return ui.div()
-        return ui.div(
-            ui.h6("HCL diff"),
-            ui.div(
-                ui.div(
-                    ui.strong("Before"),
-                    ui.pre(before, class_="bg-light p-2 rounded overflow-auto"),
-                    class_="col-6",
-                ),
-                ui.div(
-                    ui.strong("After"),
-                    ui.pre(after, class_="bg-light p-2 rounded overflow-auto"),
-                    class_="col-6",
-                ),
-                class_="row",
-            ),
-            class_="mt-3",
-        )
 
     # KPI tiles — depend on refresh_trigger so they update when Refresh clicked
     refresh_trigger: reactive.Value[int] = reactive.Value(0)
@@ -586,25 +371,10 @@ def server(input: Any, output: Any, session: Any) -> None:
 
     @reactive.calc
     def _kpi_values() -> tuple[float, float, int]:
-        """Live KPIs: Avg MTTR, RAG hit rate, KB count. Fallback to seed when db unavailable."""
         refresh_trigger()
         if _USE_REAL_MODULES and db is not None:
             return (db.avg_mttr(), db.rag_hit_rate(), db.kb_count())
-        # Graceful fallback: compute from seed events
-        runs = _effective_log(100)
-        mttr_vals = [
-            float(e["mttr_seconds"])
-            for e in runs
-            if e.get("mttr_seconds") is not None
-        ]
-        avg_mttr = sum(mttr_vals) / len(mttr_vals) if mttr_vals else 0.0
-        rag_rate = (
-            sum(1 for e in runs if e.get("rag_hit") is True) / len(runs)
-            if runs
-            else 0.0
-        )
-        kb_cnt = kb_count() if kb_count is not None else 0
-        return (avg_mttr, rag_rate, kb_cnt)
+        return (0.0, 0.0, 0)
 
     @render.ui
     def kpi_mttr() -> Any:
@@ -633,67 +403,6 @@ def server(input: Any, output: Any, session: Any) -> None:
             class_="metric-card",
         )
 
-    @reactive.calc
-    def _intel_runs() -> list[dict[str, Any]]:
-        refresh_trigger()
-        if _USE_REAL_MODULES and db is not None:
-            return db.fetch_recent(50)
-        return _effective_log(50)
-
-    @render.ui
-    def intel_heatmap() -> Any:
-        if not _CHARTS_AVAILABLE or charts is None:
-            return ui.div(ui.p("Chart unavailable"), class_="metric-card")
-        runs = _intel_runs()
-        enc = _chart_to_base64_png(charts.compliance_heatmap, runs)
-        if not enc:
-            return ui.div(ui.p("Chart unavailable"), class_="metric-card")
-        return ui.div(
-            ui.h5("Compliance heatmap"),
-            ui.tags.img(
-                src=f"data:image/png;base64,{enc}",
-                alt="Compliance heatmap",
-                style="max-width:100%; height:auto;",
-            ),
-            class_="metric-card",
-        )
-
-    @render.ui
-    def intel_mttr_trend() -> Any:
-        if not _CHARTS_AVAILABLE or charts is None:
-            return ui.div(ui.p("Chart unavailable"), class_="metric-card")
-        runs = _intel_runs()
-        enc = _chart_to_base64_png(charts.mttr_trend, runs)
-        if not enc:
-            return ui.div(ui.p("Chart unavailable"), class_="metric-card")
-        return ui.div(
-            ui.h5("MTTR trend"),
-            ui.tags.img(
-                src=f"data:image/png;base64,{enc}",
-                alt="MTTR trend",
-                style="max-width:100%; height:auto;",
-            ),
-            class_="metric-card",
-        )
-
-    @render.ui
-    def intel_violation_donut() -> Any:
-        if not _CHARTS_AVAILABLE or charts is None:
-            return ui.div(ui.p("Chart unavailable"), class_="metric-card")
-        runs = _intel_runs()
-        enc = _chart_to_base64_png(charts.violation_donut, runs)
-        if not enc:
-            return ui.div(ui.p("Chart unavailable"), class_="metric-card")
-        return ui.div(
-            ui.h5("Violation donut"),
-            ui.tags.img(
-                src=f"data:image/png;base64,{enc}",
-                alt="Violation donut",
-                style="max-width:100%; height:auto;",
-            ),
-            class_="metric-card",
-        )
-
     @render.table
     def intel_table() -> Any:
         import pandas as pd
@@ -707,363 +416,6 @@ def server(input: Any, output: Any, session: Any) -> None:
             if c not in df.columns:
                 df[c] = ""
         return df[[c for c in cols if c in df.columns]]
-
-    # ── Analytics tab ─────────────────────────────────────────────────────────
-    analytics_refresh_trigger: reactive.Value[int] = reactive.Value(0)
-
-    @reactive.effect
-    @reactive.event(input.analytics_refresh_btn)
-    def _analytics_refresh() -> None:
-        analytics_refresh_trigger.set(analytics_refresh_trigger() + 1)
-
-    @reactive.calc
-    def _analytics_runs() -> list[dict[str, Any]]:
-        analytics_refresh_trigger()
-        if _USE_REAL_MODULES and db is not None:
-            return db.fetch_recent(50)
-        return _effective_log(50)
-
-    @reactive.calc
-    def _analytics_kpi_values() -> tuple[int, float, float, float]:
-        """Total runs, avg MTTR, compliance rate %, RAG hit rate %."""
-        runs = _analytics_runs()
-        if not runs:
-            return (0, 0.0, 0.0, 0.0)
-        total = len(runs)
-        mttr_vals = [
-            float(e["mttr_seconds"])
-            for e in runs
-            if e.get("mttr_seconds") is not None
-        ]
-        avg_mttr = sum(mttr_vals) / len(mttr_vals) if mttr_vals else 0.0
-        approved = sum(1 for e in runs if str(e.get("reviewer_verdict", "")).strip().upper() == "APPROVED")
-        compliance_pct = (approved / total) * 100.0 if total else 0.0
-        rag_hits = sum(1 for e in runs if e.get("rag_hit") is True)
-        rag_pct = (rag_hits / total) * 100.0 if total else 0.0
-        return (total, avg_mttr, compliance_pct, rag_pct)
-
-    @render.ui
-    def analytics_kpi_total() -> Any:
-        total = _analytics_kpi_values()[0]
-        return ui.div(
-            ui.h5("Total runs"),
-            ui.p(str(total), class_="mb-0"),
-            class_="metric-card",
-        )
-
-    @render.ui
-    def analytics_kpi_mttr() -> Any:
-        avg = _analytics_kpi_values()[1]
-        return ui.div(
-            ui.h5("Avg MTTR"),
-            ui.p(f"{avg:.2f}s", class_="mb-0"),
-            class_="metric-card",
-        )
-
-    @render.ui
-    def analytics_kpi_compliance() -> Any:
-        pct = _analytics_kpi_values()[2]
-        return ui.div(
-            ui.h5("Compliance rate"),
-            ui.p(f"{pct:.1f}%", class_="mb-0"),
-            class_="metric-card",
-        )
-
-    @render.ui
-    def analytics_kpi_rag() -> Any:
-        pct = _analytics_kpi_values()[3]
-        return ui.div(
-            ui.h5("RAG hit rate"),
-            ui.p(f"{pct:.1f}%", class_="mb-0"),
-            class_="metric-card",
-        )
-
-    @render.ui
-    def analytics_chart_heatmap() -> Any:
-        if not _CHARTS_AVAILABLE or charts is None:
-            return ui.div(ui.p("Chart unavailable"), class_="metric-card")
-        runs = _analytics_runs()
-        enc = _chart_to_base64_png(charts.compliance_heatmap, runs)
-        if not enc:
-            return ui.div(ui.p("Chart unavailable"), class_="metric-card")
-        return ui.div(
-            ui.h6("Compliance heatmap"),
-            ui.tags.img(
-                src=f"data:image/png;base64,{enc}",
-                alt="Compliance heatmap",
-                style="max-width:100%; height:auto;",
-            ),
-            class_="metric-card",
-        )
-
-    @render.ui
-    def analytics_chart_mttr() -> Any:
-        if not _CHARTS_AVAILABLE or charts is None:
-            return ui.div(ui.p("Chart unavailable"), class_="metric-card")
-        runs = _analytics_runs()
-        enc = _chart_to_base64_png(charts.mttr_trend, runs)
-        if not enc:
-            return ui.div(ui.p("Chart unavailable"), class_="metric-card")
-        return ui.div(
-            ui.h6("MTTR trend"),
-            ui.tags.img(
-                src=f"data:image/png;base64,{enc}",
-                alt="MTTR trend",
-                style="max-width:100%; height:auto;",
-            ),
-            class_="metric-card",
-        )
-
-    @render.ui
-    def analytics_chart_donut() -> Any:
-        if not _CHARTS_AVAILABLE or charts is None:
-            return ui.div(ui.p("Chart unavailable"), class_="metric-card")
-        runs = _analytics_runs()
-        enc = _chart_to_base64_png(charts.violation_donut, runs)
-        if not enc:
-            return ui.div(ui.p("Chart unavailable"), class_="metric-card")
-        return ui.div(
-            ui.h6("Violation donut"),
-            ui.tags.img(
-                src=f"data:image/png;base64,{enc}",
-                alt="Violation donut",
-                style="max-width:100%; height:auto;",
-            ),
-            class_="metric-card",
-        )
-
-    @render.ui
-    def analytics_chart_kb() -> Any:
-        if not _CHARTS_AVAILABLE or charts is None:
-            return ui.div(ui.p("Chart unavailable"), class_="metric-card")
-        runs = _analytics_runs()
-        enc = _chart_to_base64_png(charts.kb_growth, runs)
-        if not enc:
-            return ui.div(ui.p("Chart unavailable"), class_="metric-card")
-        return ui.div(
-            ui.h6("KB growth"),
-            ui.tags.img(
-                src=f"data:image/png;base64,{enc}",
-                alt="KB growth",
-                style="max-width:100%; height:auto;",
-            ),
-            class_="metric-card",
-        )
-
-    @render.download(filename="audit_log.csv")
-    def analytics_csv_download() -> Any:
-        import pandas as pd
-
-        if _USE_REAL_MODULES and db is not None:
-            rows = db.fetch_recent(10000)
-        else:
-            rows = _effective_log(10000)
-        if not rows:
-            yield "task_id,timestamp,violation_type,resource_id,reviewer_verdict,is_compliant,mttr_seconds,rag_hit\n"
-            return
-        df = pd.DataFrame(rows)
-        yield df.to_csv(index=False)
-
-    # ── About tab ─────────────────────────────────────────────────────────────
-
-    @render.ui
-    def about_panel() -> Any:
-        def _qr_img(filename: str, alt: str) -> Any:
-            b64 = _load_qr_b64(filename)
-            if b64:
-                return ui.tags.img(
-                    src=f"data:image/png;base64,{b64}",
-                    alt=alt,
-                    style="max-width:120px; height:auto;",
-                )
-            return ui.span("QR", class_="text-muted small")
-
-        return ui.div(
-            ui.div(
-                ui.div(
-                    ui.tags.div("RR", style=f"width:80px;height:80px;border-radius:50%;background:{_BRAND_PURPLE};color:white;display:flex;align-items:center;justify-content:center;font-weight:bold;font-size:24px;"),
-                    ui.h4("Robert Reichert", style=f"color:{_BRAND_PURPLE}; margin-top:12px;"),
-                    ui.p("Healthcare Data Scientist & AI Architect", class_="text-muted mb-1"),
-                    ui.p("Sovereign Compliance. Automated. Auditable.", style=f"color:{_BRAND_GREEN}; font-weight:500;"),
-                    class_="text-center mb-4",
-                ),
-                class_="col-12",
-            ),
-            ui.row(
-                ui.column(
-                    4,
-                    ui.card(
-                        ui.card_header("Cloud Compliance Automation"),
-                        ui.card_body(
-                            "OPA policy enforcement, HIPAA §164.312 controls, "
-                            "FedRAMP-ready infrastructure validation",
-                        ),
-                        class_="about-card mb-3",
-                    ),
-                ),
-                ui.column(
-                    4,
-                    ui.card(
-                        ui.card_header("Agentic AI Systems"),
-                        ui.card_body(
-                            "Compound AI loops: Planner → Worker → Reviewer with "
-                            "RAG-enhanced self-correction and Supabase audit trail",
-                        ),
-                        class_="about-card mb-3",
-                    ),
-                ),
-                ui.column(
-                    4,
-                    ui.card(
-                        ui.card_header("Healthcare Data Science"),
-                        ui.card_body(
-                            "22+ years Medicare Advantage analytics, $148M+ documented "
-                            "savings, HEDIS/RADV/Star Ratings expertise",
-                        ),
-                        class_="about-card mb-3",
-                    ),
-                ),
-            ),
-            ui.div(
-                ui.h6("Contact"),
-                ui.p("Email: reichert.starguardai@email.com"),
-                ui.p("LinkedIn: linkedin.com/in/robertreichert"),
-                ui.p("Phone: 480-767-1337"),
-                ui.p("Available: April 2026 | Contract | Remote", style=f"color:{_BRAND_GREEN};"),
-                class_="mb-4 p-3 rounded", style=f"background:#f8f9fa; border-left:4px solid {_BRAND_PURPLE};",
-            ),
-            ui.h6("Portfolio Apps"),
-            ui.row(
-                ui.column(
-                    6,
-                    ui.card(
-                        ui.card_header("AuditShield Live"),
-                        ui.card_body(
-                            ui.p("HEDIS/RADV Chart Audit — Agentic RAG + Claude"),
-                            ui.a("https://rreichert-auditshield-live.hf.space", href="https://rreichert-auditshield-live.hf.space", target="_blank"),
-                            ui.div(_qr_img("QR_AuditShield_Live.b64.txt", "AuditShield QR"), class_="mt-2"),
-                        ),
-                        class_="services-card mb-3",
-                    ),
-                ),
-                ui.column(
-                    6,
-                    ui.card(
-                        ui.card_header("StarGuard Desktop"),
-                        ui.card_body(
-                            ui.p("Star Ratings Forecasting — Compound AI"),
-                            ui.a("https://rreichert-starguard-desktop.hf.space", href="https://rreichert-starguard-desktop.hf.space", target="_blank"),
-                            ui.div(_qr_img("QR_-Landing.b64.txt", "StarGuard Desktop QR"), class_="mt-2"),
-                        ),
-                        class_="services-card mb-3",
-                    ),
-                ),
-                ui.column(
-                    6,
-                    ui.card(
-                        ui.card_header("StarGuard Mobile"),
-                        ui.card_body(
-                            ui.p("Mobile Analytics — Field Operations"),
-                            ui.a("https://rreichert-starguardai.hf.space", href="https://rreichert-starguardai.hf.space", target="_blank"),
-                            ui.div(_qr_img("QR_Mobile_Tiny_Sized.b64.txt", "StarGuard Mobile QR"), class_="mt-2"),
-                        ),
-                        class_="services-card mb-3",
-                    ),
-                ),
-                ui.column(
-                    6,
-                    ui.card(
-                        ui.card_header("SovereignShield Mobile"),
-                        ui.card_body(
-                            ui.p("Compliance Remediation — Mobile (coming soon)"),
-                            ui.span("Mobile version coming soon", style=f"color:{_BRAND_GOLD};"),
-                        ),
-                        class_="services-card mb-3",
-                    ),
-                ),
-            ),
-            class_="container py-3",
-        )
-
-    # ── Services tab ──────────────────────────────────────────────────────────
-
-    @render.ui
-    def services_panel() -> Any:
-        return ui.div(
-            ui.row(
-                ui.column(
-                    4,
-                    ui.card(
-                        ui.card_header("Sovereign Cloud Compliance Audit — $150/hr"),
-                        ui.card_body(
-                        ui.p(
-                            "End-to-end OPA policy evaluation of your AWS/Azure "
-                            "infrastructure against HIPAA, FedRAMP, and CMS requirements",
-                            ),
-                            ui.strong("Deliverables:"),
-                            ui.tags.ul(
-                                ui.tags.li("Terraform state analysis and violation report"),
-                                ui.tags.li("Prioritized remediation plan (HIGH/MEDIUM/LOW)"),
-                                ui.tags.li("HIPAA §164.312 compliance scorecard"),
-                            ),
-                            ui.p("Engagement: 2–4 weeks", class_="text-muted mt-2 mb-0"),
-                        ),
-                        class_="services-card mb-3",
-                    ),
-                ),
-                ui.column(
-                    4,
-                    ui.card(
-                        ui.card_header("Agentic AI System Design — $125/hr"),
-                        ui.card_body(
-                            ui.p(
-                                "Architecture and implementation of Compound AI systems with "
-                                "Planner/Worker/Reviewer loops, RAG retrieval, and audit-trail persistence",
-                            ),
-                            ui.strong("Deliverables:"),
-                            ui.tags.ul(
-                                ui.tags.li("System architecture document"),
-                                ui.tags.li("Working prototype with Claude API integration"),
-                                ui.tags.li("ChromaDB knowledge base seeded with your domain content"),
-                            ),
-                            ui.p("Engagement: 4–8 weeks", class_="text-muted mt-2 mb-0"),
-                        ),
-                        class_="services-card mb-3",
-                    ),
-                ),
-                ui.column(
-                    4,
-                    ui.card(
-                        ui.card_header("HEDIS/RADV Analytics Consulting — $100/hr"),
-                        ui.card_body(
-                            ui.p(
-                                "Medicare Advantage analytics from gap closure to RADV audit "
-                                "defense, with AI-assisted chart review",
-                            ),
-                            ui.strong("Deliverables:"),
-                            ui.tags.ul(
-                                ui.tags.li("HEDIS measure gap analysis"),
-                                ui.tags.li("RADV audit defense documentation"),
-                                ui.tags.li("Star Ratings forecast model"),
-                            ),
-                            ui.p("Engagement: Ongoing", class_="text-muted mt-2 mb-0"),
-                        ),
-                        class_="services-card mb-3",
-                    ),
-                ),
-            ),
-            ui.div(
-                ui.p("Available April 2026 | Contract | Remote", class_="mb-2"),
-                ui.input_action_button(
-                    "contact_btn",
-                    "Contact: reichert.starguardai@email.com",
-                    class_="btn",
-                    style=f"background-color:{_BRAND_GOLD}; color:#000;",
-                ),
-                class_="text-center mt-4 p-3",
-            ),
-            class_="container py-3",
-        )
 
 
 app = App(app_ui, server, debug=True)
