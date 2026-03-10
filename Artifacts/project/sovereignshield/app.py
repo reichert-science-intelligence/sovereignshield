@@ -4,18 +4,23 @@ Real agent loop: OPA evaluate → Planner → Worker → Reviewer → RAG/Supaba
 """
 from __future__ import annotations
 
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
+
 from datetime import datetime
 from typing import Any
 
 # Graceful import fallback — run with simulated data if any module fails
 _USE_REAL_MODULES = True
 try:
-    from .core.opa_eval import evaluate
-    from .core.audit_db import db
-    from .agents.planner import planner
-    from .agents.worker import worker
-    from .agents.reviewer import reviewer
-    from .rag.retriever import embed_and_store, retrieve_similar
+    from project.sovereignshield.core.opa_eval import evaluate
+    from project.sovereignshield.core.audit_db import db
+    from project.sovereignshield.agents.planner import planner
+    from project.sovereignshield.agents.worker import worker
+    from project.sovereignshield.agents.reviewer import reviewer
+    from project.sovereignshield.rag.retriever import embed_and_store, retrieve_similar
 except ImportError:
     _USE_REAL_MODULES = False
     evaluate = None  # type: ignore[assignment]
