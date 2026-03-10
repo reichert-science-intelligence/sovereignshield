@@ -1,6 +1,5 @@
 ---
 title: SovereignShield
-emoji: =?
 colorFrom: indigo
 colorTo: yellow
 sdk: docker
