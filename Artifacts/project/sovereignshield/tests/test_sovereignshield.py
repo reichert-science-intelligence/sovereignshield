@@ -425,3 +425,117 @@ def test_legacy_cloud_resource_dataclass() -> None:
     assert r.type == "aws_s3_bucket"
     assert r.name == "test"
     assert r.attributes["id"] == "s3-1"
+
+
+# ── Sprint 1 chart module (core/charts.py) ─────────────────────────────────────
+
+
+@pytest.mark.unit
+def test_heatmap_data_columns() -> None:
+    """heatmap_data returns DataFrame with resource_id, violation_type, status, run_count."""
+    import pandas as pd
+
+    from project.sovereignshield.core.charts import heatmap_data
+
+    runs = [
+        {"resource_id": "s3-x", "violation_type": "data_residency", "is_compliant": True},
+        {"resource_id": "ec2-y", "violation_type": "encryption", "is_compliant": False},
+    ]
+    df = heatmap_data(runs)
+    assert isinstance(df, pd.DataFrame)
+    assert set(df.columns) >= {"resource_id", "violation_type", "status", "run_count"}
+    assert len(df) == 2
+    assert df["status"].iloc[0] == "compliant"
+    assert df["status"].iloc[1] == "violation"
+
+
+@pytest.mark.unit
+def test_mttr_trend_data_shape() -> None:
+    """mttr_trend_data returns DataFrame with run_index, mttr_seconds, timestamp; respects limit."""
+    import pandas as pd
+
+    from project.sovereignshield.core.charts import mttr_trend_data
+
+    runs = [
+        {"timestamp": "2025-03-09T10:00:00", "mttr_seconds": 4.2},
+        {"timestamp": "2025-03-09T11:00:00", "mttr_seconds": 3.1},
+        {"timestamp": "2025-03-09T12:00:00", "mttr_seconds": 5.0},
+    ]
+    df = mttr_trend_data(runs, limit=20)
+    assert isinstance(df, pd.DataFrame)
+    assert set(df.columns) >= {"run_index", "mttr_seconds", "timestamp"}
+    assert len(df) == 3
+    df2 = mttr_trend_data(runs, limit=2)
+    assert len(df2) == 2
+
+
+@pytest.mark.unit
+def test_donut_data_counts() -> None:
+    """donut_data returns severity counts for HIGH, MEDIUM, LOW, INFO."""
+    import pandas as pd
+
+    from project.sovereignshield.core.charts import donut_data
+
+    runs = [
+        {"severity": "HIGH"},
+        {"severity": "HIGH"},
+        {"severity": "MEDIUM"},
+        {"severity": "LOW"},
+        {"severity": "INFO"},
+    ]
+    df = donut_data(runs)
+    assert isinstance(df, pd.DataFrame)
+    assert set(df.columns) >= {"severity", "count"}
+    high_row = df[df["severity"] == "HIGH"]
+    assert len(high_row) == 1
+    assert high_row["count"].iloc[0] == 2
+    assert df["count"].sum() == 5
+
+
+@pytest.mark.unit
+def test_kb_growth_data_nonnegative() -> None:
+    """kb_growth_data returns session/kb_added with non-negative counts."""
+    import pandas as pd
+
+    from project.sovereignshield.core.charts import kb_growth_data
+
+    runs = [
+        {"timestamp": "2025-03-09T10:00:00", "is_compliant": True},
+        {"timestamp": "2025-03-09T10:30:00", "is_compliant": True},
+        {"timestamp": "2025-03-09T10:45:00", "is_compliant": False},
+        {"timestamp": "2025-03-10T09:00:00", "is_compliant": True},
+    ]
+    df = kb_growth_data(runs)
+    assert isinstance(df, pd.DataFrame)
+    assert set(df.columns) >= {"session", "kb_added"}
+    assert (df["kb_added"] >= 0).all()
+    assert df["kb_added"].sum() == 3
+
+
+@pytest.mark.unit
+def test_compliance_heatmap_returns_ggplot() -> None:
+    """compliance_heatmap returns a plotnine ggplot object."""
+    pytest.importorskip("plotnine")
+    from project.sovereignshield.core.charts import compliance_heatmap
+
+    runs = [
+        {"resource_id": "s3-x", "violation_type": "data_residency", "is_compliant": True},
+    ]
+    p = compliance_heatmap(runs)
+    assert p is not None
+    assert hasattr(p, "draw") or "ggplot" in type(p).__name__ or "ggplot" in str(type(p))
+
+
+@pytest.mark.unit
+def test_mttr_trend_returns_ggplot() -> None:
+    """mttr_trend returns a plotnine ggplot object."""
+    pytest.importorskip("plotnine")
+    from project.sovereignshield.core.charts import mttr_trend
+
+    runs = [
+        {"timestamp": "2025-03-09T10:00:00", "mttr_seconds": 4.2},
+        {"timestamp": "2025-03-09T11:00:00", "mttr_seconds": 3.1},
+    ]
+    p = mttr_trend(runs, limit=20)
+    assert p is not None
+    assert hasattr(p, "draw") or "ggplot" in type(p).__name__ or "ggplot" in str(type(p))
