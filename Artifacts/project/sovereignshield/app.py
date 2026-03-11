@@ -332,13 +332,13 @@ def _about_ui() -> Any:
         ui.h5("Services", style="margin-top: 24px; margin-bottom: 12px;"),
         ui.accordion(
             ui.accordion_panel(
-                "Sovereign Cloud Compliance Audit — $150/hr",
+                "Sovereign Cloud Compliance Audit — Senior Consultant Rate",
                 ui.p("HIPAA-compliant cloud resource audit with OPA policy evaluation and Terraform remediation."),
                 ui.tags.ul(ui.tags.li("Policy-as-code review"), ui.tags.li("Violation report"), ui.tags.li("Terraform fix generation")),
                 ui.p("Typical engagement: 2–4 weeks", style="margin-top: 8px;"),
             ),
             ui.accordion_panel(
-                "Agentic AI System Design — $125/hr",
+                "Agentic AI System Design — Senior Consultant Rate",
                 ui.p("Design and implement agentic workflows (Planner → Worker → Reviewer) for compliance and automation."),
                 ui.tags.ul(ui.tags.li("Architecture design"), ui.tags.li("RAG integration"), ui.tags.li("Claude API integration")),
                 ui.p("Typical engagement: 4–8 weeks", style="margin-top: 8px;"),
@@ -351,7 +351,7 @@ def _about_ui() -> Any:
             ),
         ),
         ui.div(
-            ui.a("Contact: reichert.starguardai@email.com", href="mailto:reichert.starguardai@email.com",
+            ui.a("Discuss Engagement: reichert.starguardai@email.com", href="mailto:reichert.starguardai@email.com",
                 class_="btn btn-warning", style="width: 100%; margin-top: 16px; display: block; text-align: center; text-decoration: none; background: #D4AF37; color: black; font-weight: bold; border: none;"),
         ),
         _footer(),
