@@ -150,10 +150,10 @@ def compliance_heatmap(runs: list[dict[str, Any]]) -> Any:
     data["status"] = pd.Categorical(data["status"], categories=fill_order, ordered=True)
 
     p = (
-        ggplot(data, aes(x="resource_id", y="violation_type", fill="status"))
+        ggplot(data, aes(x="resource_id", y="violation_type", fill="status"))  # type: ignore[no-untyped-call]
         + geom_tile(width=0.9, height=0.9)
         + scale_fill_manual(values=color_map, na_value="#e0e0e0")
-        + theme_minimal()
+        + theme_minimal()  # type: ignore[no-untyped-call]
     )
     return p
 
@@ -170,10 +170,10 @@ def mttr_trend(runs: list[dict[str, Any]], limit: int = 20) -> Any:
     from plotnine import aes, geom_line, geom_point, ggplot, theme_minimal
 
     p = (
-        ggplot(data, aes(x="run_index", y="mttr_seconds"))
+        ggplot(data, aes(x="run_index", y="mttr_seconds"))  # type: ignore[no-untyped-call]
         + geom_line()
         + geom_point()
-        + theme_minimal()
+        + theme_minimal()  # type: ignore[no-untyped-call]
     )
     return p
 
@@ -188,15 +188,15 @@ def violation_donut(runs: list[dict[str, Any]]) -> Any:
         data = pd.DataFrame({"severity": ["INFO"], "count": [0]})
 
     from plotnine import aes, geom_bar, ggplot, scale_fill_manual, theme_void
-    from plotnine.coords import coord_polar
+    from plotnine.coords import coord_polar  # type: ignore[attr-defined]
 
     severity_colors = {"HIGH": "#dc3545", "MEDIUM": "#ffc107", "LOW": "#28a745", "INFO": "#6c757d"}
     p = (
-        ggplot(data, aes(x="1", y="count", fill="severity"))
+        ggplot(data, aes(x="1", y="count", fill="severity"))  # type: ignore[no-untyped-call]
         + geom_bar(stat="identity", width=0.6)
         + coord_polar(theta="y")
         + scale_fill_manual(values=severity_colors, na_value="#e0e0e0")
-        + theme_void()
+        + theme_void()  # type: ignore[no-untyped-call]
     )
     return p
 
@@ -213,8 +213,8 @@ def kb_growth(runs: list[dict[str, Any]]) -> Any:
     from plotnine import aes, geom_col, ggplot, theme_minimal
 
     p = (
-        ggplot(data, aes(x="session", y="kb_added"))
+        ggplot(data, aes(x="session", y="kb_added"))  # type: ignore[no-untyped-call]
         + geom_col()
-        + theme_minimal()
+        + theme_minimal()  # type: ignore[no-untyped-call]
     )
     return p

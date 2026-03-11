@@ -692,14 +692,14 @@ def server(input: Any, output: Any, session: Any) -> None:
         ui.update_select("violation_select", choices=_violation_choices())
 
     agent_result: reactive.Value[dict[str, Any] | None] = reactive.Value(None)
-    batch_results: reactive.Value[list[dict]] = reactive.Value([])
+    batch_results: reactive.Value[list[dict[str, Any]]] = reactive.Value([])
 
     @reactive.effect
     @reactive.event(input.run_all)
     async def _run_batch() -> None:
         resources = active_resources()
         violations_all = _violations()
-        results: list[dict] = []
+        results: list[dict[str, Any]] = []
         for resource in resources:
             res_violations = [
                 v for v in violations_all
@@ -838,7 +838,7 @@ def server(input: Any, output: Any, session: Any) -> None:
         return df[[c for c in cols if c in df.columns]]
 
     @render.download(filename=lambda: f"sovereignshield_report_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf")
-    async def export_pdf():
+    async def export_pdf():  # type: ignore[no-untyped-def]
         from pdf_report import generate_report
         results = batch_results()
         if not results:
