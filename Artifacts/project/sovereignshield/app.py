@@ -283,68 +283,6 @@ def _footer() -> Any:
     )
 
 
-app_ui = ui.page_fluid(
-    ui.tags.head(ui.tags.style(_CSS)),
-    ui.panel_title("SovereignShield — Compliance Remediation"),
-    ui.navset_card_pill(
-        ui.nav_panel(
-            "Catalogue",
-            ui.card(
-                ui.card_header("Resources"),
-                ui.output_table("catalogue_table"),
-            ),
-            _footer(),
-        ),
-        ui.nav_panel(
-            "Agent Loop",
-            ui.layout_sidebar(
-                ui.sidebar(
-                    ui.h5("Run remediation"),
-                    ui.input_select(
-                        "violation_select",
-                        "Violation",
-                        choices={"s3-staging-analytics|data_residency": "s3-staging-analytics / data_residency"},  # updated by server
-                    ),
-                    ui.input_action_button("run_btn", "Run", class_="btn-primary"),
-                    title="Controls",
-                    width=280,
-                ),
-                ui.card(
-                    ui.card_header("Waterfall trace"),
-                    ui.output_text("trace_output"),
-                    ui.output_text("verdict_output"),
-                ),
-            ),
-            _footer(),
-        ),
-        ui.nav_panel(
-            "Intelligence",
-            ui.layout_sidebar(
-                ui.sidebar(
-                    ui.input_action_button("refresh_btn", "Refresh"),
-                    title="System",
-                    width=200,
-                ),
-                ui.row(
-                    ui.column(4, ui.output_ui("kpi_mttr")),
-                    ui.column(4, ui.output_ui("kpi_rag")),
-                    ui.column(4, ui.output_ui("kpi_kb")),
-                ),
-                ui.card(
-                    ui.card_header("Recent events"),
-                    ui.output_table("intel_table"),
-                ),
-            ),
-            _footer(),
-        ),
-        ui.nav_panel(
-            "About",
-            _about_ui(),
-        ),
-    ),
-)
-
-
 def _about_ui() -> Any:
     """Tab 4: About + Services — matches mobile content."""
     return ui.div(
@@ -418,6 +356,68 @@ def _about_ui() -> Any:
         ),
         _footer(),
     )
+
+
+app_ui = ui.page_fluid(
+    ui.tags.head(ui.tags.style(_CSS)),
+    ui.panel_title("SovereignShield — Compliance Remediation"),
+    ui.navset_card_pill(
+        ui.nav_panel(
+            "Catalogue",
+            ui.card(
+                ui.card_header("Resources"),
+                ui.output_table("catalogue_table"),
+            ),
+            _footer(),
+        ),
+        ui.nav_panel(
+            "Agent Loop",
+            ui.layout_sidebar(
+                ui.sidebar(
+                    ui.h5("Run remediation"),
+                    ui.input_select(
+                        "violation_select",
+                        "Violation",
+                        choices={"s3-staging-analytics|data_residency": "s3-staging-analytics / data_residency"},  # updated by server
+                    ),
+                    ui.input_action_button("run_btn", "Run", class_="btn-primary"),
+                    title="Controls",
+                    width=280,
+                ),
+                ui.card(
+                    ui.card_header("Waterfall trace"),
+                    ui.output_text("trace_output"),
+                    ui.output_text("verdict_output"),
+                ),
+            ),
+            _footer(),
+        ),
+        ui.nav_panel(
+            "Intelligence",
+            ui.layout_sidebar(
+                ui.sidebar(
+                    ui.input_action_button("refresh_btn", "Refresh"),
+                    title="System",
+                    width=200,
+                ),
+                ui.row(
+                    ui.column(4, ui.output_ui("kpi_mttr")),
+                    ui.column(4, ui.output_ui("kpi_rag")),
+                    ui.column(4, ui.output_ui("kpi_kb")),
+                ),
+                ui.card(
+                    ui.card_header("Recent events"),
+                    ui.output_table("intel_table"),
+                ),
+            ),
+            _footer(),
+        ),
+        ui.nav_panel(
+            "About",
+            _about_ui(),
+        ),
+    ),
+)
 
 
 def server(input: Any, output: Any, session: Any) -> None:
