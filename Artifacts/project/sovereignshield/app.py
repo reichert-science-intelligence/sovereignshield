@@ -4,11 +4,13 @@ Real agent loop: OPA evaluate → Planner → Worker → Reviewer → RAG/Supaba
 """
 from __future__ import annotations
 
+import asyncio
 import base64
 import json
 import os
 import re
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, cast
@@ -468,6 +470,14 @@ app_ui = ui.page_fluid(
                 placeholder="Drop .tf or .tfstate file here",
             ),
             ui.output_text("upload_status"),
+            ui.input_action_button(
+                "run_all",
+                "⚡ Run Batch Remediation — All Resources",
+                style="background:#D4AF37; color:#1A1633; font-weight:700; "
+                      "border:none; padding:10px 24px; border-radius:8px; "
+                      "width:100%; margin-bottom:16px;",
+            ),
+            ui.output_ui("batch_results_panel"),
             ui.card(
                 ui.card_header("Resources"),
                 ui.output_table("catalogue_table"),
@@ -604,6 +614,54 @@ def server(input: Any, output: Any, session: Any) -> None:
         r = active_resources()
         return f"Loaded {len(r)} resources from {f[0]['name']}"
 
+    @render.ui
+    def batch_results_panel() -> Any:
+        results = batch_results()
+        if not results:
+            return ui.div()
+        compliant = sum(1 for r in results if r["verdict"] == "COMPLIANT")
+        total = len(results)
+        avg_mttr = (
+            sum(r["mttr_seconds"] for r in results) / total if total else 0
+        )
+        rows = "".join(
+            f"<tr>"
+            f"<td style='padding:6px'>{r['resource_id']}</td>"
+            f"<td style='padding:6px'>{r['resource_type']}</td>"
+            f"<td style='padding:6px; color:{'#10B981' if r['verdict']=='COMPLIANT' else '#EF4444'}'>"
+            f"{r['verdict']}</td>"
+            f"<td style='padding:6px'>{r['violations']}</td>"
+            f"<td style='padding:6px'>{r['mttr_seconds']}s</td>"
+            f"</tr>"
+            for r in results
+        )
+        return ui.HTML(
+            f"""
+            <div style='margin-top:16px; background:#1A1633; '
+                      'border-radius:10px; padding:16px;'>
+                <div style='display:flex; gap:24px; margin-bottom:12px;'>
+                    <span style='color:#D4AF37; font-weight:700'>
+                        {compliant}/{total} Compliant</span>
+                    <span style='color:#aaa'>
+                        Avg MTTR: {avg_mttr:.1f}s</span>
+                </div>
+                <table style='width:100%; color:#eee; '
+                       'border-collapse:collapse; font-size:0.85rem;'>
+                    <thead>
+                        <tr style='color:#D4AF37; border-bottom:1px solid #4A3E8F'>
+                            <th style='padding:6px; text-align:left'>Resource</th>
+                            <th style='padding:6px; text-align:left'>Type</th>
+                            <th style='padding:6px; text-align:left'>Verdict</th>
+                            <th style='padding:6px; text-align:left'>Violations</th>
+                            <th style='padding:6px; text-align:left'>MTTR</th>
+                        </tr>
+                    </thead>
+                    <tbody>{rows}</tbody>
+                </table>
+            </div>
+            """
+        )
+
     @reactive.calc
     def _violations() -> list[dict[str, Any]]:
         v = evaluate(active_resources(), active_policy()) if _USE_REAL_MODULES and evaluate else []
@@ -627,6 +685,50 @@ def server(input: Any, output: Any, session: Any) -> None:
         ui.update_select("violation_select", choices=_violation_choices())
 
     agent_result: reactive.Value[dict[str, Any] | None] = reactive.Value(None)
+    batch_results: reactive.Value[list[dict]] = reactive.Value([])
+
+    @reactive.effect
+    @reactive.event(input.run_all)
+    async def _run_batch() -> None:
+        resources = active_resources()
+        violations_all = _violations()
+        results: list[dict] = []
+        for resource in resources:
+            res_violations = [
+                v for v in violations_all
+                if str(v.get("resource_id", "")) == resource.resource_id
+            ]
+            if not res_violations:
+                results.append({
+                    "resource_id": resource.resource_id,
+                    "resource_type": resource.resource_type,
+                    "verdict": "COMPLIANT",
+                    "violations": 0,
+                    "mttr_seconds": 0,
+                })
+                continue
+            start = time.time()
+            try:
+                out = await asyncio.to_thread(
+                    _run_agents,
+                    resource.resource_id,
+                    res_violations[0]["violation_type"],
+                    resources,
+                    active_policy(),
+                )
+                verdict = out.get("verdict", "ERROR")
+                mttr = round(time.time() - start, 1)
+            except Exception:
+                verdict = "ERROR"
+                mttr = 0.0
+            results.append({
+                "resource_id": resource.resource_id,
+                "resource_type": resource.resource_type,
+                "verdict": verdict,
+                "violations": len(res_violations),
+                "mttr_seconds": mttr,
+            })
+        batch_results.set(results)
 
     @reactive.effect
     @reactive.event(input.run_btn)
