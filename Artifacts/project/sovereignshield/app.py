@@ -5,14 +5,17 @@ Real agent loop: OPA evaluate → Planner → Worker → Reviewer → RAG/Supaba
 from __future__ import annotations
 
 import base64
+import json
 import os
+import re
 import sys
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, cast
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(__file__))))
 
 from datetime import datetime
-from typing import Any, cast
 
 # Graceful import fallback — run with simulated data if any module fails
 _USE_REAL_MODULES = True
@@ -41,6 +44,70 @@ except ImportError:
 from project.sovereignshield.models import CloudResource
 
 # Full 5-resource catalogue
+
+
+def parse_terraform(file_path: str) -> list[dict[str, Any]]:
+    """
+    Parse Terraform .tf or .tfstate file and extract resources.
+    Returns list of dicts with keys: resource_id, resource_type, region, encryption_enabled, is_public, tags.
+    Falls back to empty list if parsing fails (caller uses RESOURCES when empty).
+    """
+    result: list[dict[str, Any]] = []
+    path = Path(file_path)
+    if not path.exists():
+        return []
+    try:
+        suffix = path.suffix.lower()
+        if suffix in (".tfstate", ".json"):
+            data = json.loads(path.read_text(encoding="utf-8"))
+            resources = data.get("resources") or []
+            for r in resources:
+                res_type = str(r.get("type", ""))
+                res_name = str(r.get("name", ""))
+                resource_id = f"{res_type}-{res_name}".replace("aws_", "").replace("_", "-") if res_type and res_name else res_name or res_type
+                instances = r.get("instances") or []
+                region = ""
+                tags: dict[str, str] = {}
+                if instances:
+                    attrs = instances[0].get("attributes") or {}
+                    region = str(attrs.get("region") or attrs.get("region_name") or "")
+                    if not region and attrs.get("availability_zone"):
+                        az = str(attrs["availability_zone"])
+                        match = re.match(r"^([a-z]+-[a-z]+-\d+)", az)
+                        region = match.group(1) if match else "us-east-1"
+                    raw_tags = attrs.get("tags") or {}
+                    if isinstance(raw_tags, dict):
+                        tags = {str(k): str(v) for k, v in raw_tags.items()}
+                if not region:
+                    region = "us-east-1"
+                result.append({
+                    "resource_id": resource_id or f"resource-{len(result)}",
+                    "resource_type": res_type,
+                    "region": region,
+                    "encryption_enabled": False,
+                    "is_public": False,
+                    "tags": tags,
+                })
+        elif suffix == ".tf":
+            content = path.read_text(encoding="utf-8")
+            pattern = re.compile(r'resource\s+"([^"]+)"\s+"([^"]+)"\s*\{', re.MULTILINE)
+            for m in pattern.finditer(content):
+                res_type = m.group(1).strip()
+                res_name = m.group(2).strip()
+                resource_id = f"{res_type}-{res_name}".replace("aws_", "").replace("_", "-") if res_type and res_name else res_name or res_type
+                result.append({
+                    "resource_id": resource_id or f"resource-{len(result)}",
+                    "resource_type": res_type,
+                    "region": "us-east-1",
+                    "encryption_enabled": False,
+                    "is_public": False,
+                    "tags": {},
+                })
+    except Exception:
+        return []
+    return result
+
+
 RESOURCES: list[CloudResource] = [
     CloudResource(
         resource_id="s3-phi-claims-001",
@@ -132,7 +199,7 @@ def _run_agents(resource_id: str, violation_type: str) -> dict[str, Any]:
             "work": None,
         }
 
-    violations = evaluate(RESOURCES)
+    violations = evaluate(resources)
     selected = next(
         (
             v
@@ -366,6 +433,13 @@ app_ui = ui.page_fluid(
     ui.navset_card_pill(
         ui.nav_panel(
             "Catalogue",
+            ui.input_file(
+                "tf_upload",
+                "Upload Terraform File (.tf or .tfstate)",
+                accept=[".tf", ".tfstate", ".json"],
+                placeholder="Drop .tf or .tfstate file here",
+            ),
+            ui.output_text("upload_status"),
             ui.card(
                 ui.card_header("Resources"),
                 ui.output_table("catalogue_table"),
@@ -423,29 +497,60 @@ app_ui = ui.page_fluid(
 
 
 def server(input: Any, output: Any, session: Any) -> None:
-    # Violation choices from evaluate(RESOURCES)
-    violations = (
-        evaluate(RESOURCES) if _USE_REAL_MODULES and evaluate else []
-    )
-    if not violations:
-        violations = [
-            {
-                "resource_id": "s3-staging-analytics",
-                "violation_type": "data_residency",
-                "severity": "HIGH",
-            }
-        ]
-    # Shiny select: value -> label (user sees label, gets value)
-    choices = {
-        f"{v.get('resource_id', '')}|{v.get('violation_type', '')}": f"{v.get('resource_id', '')} / {v.get('violation_type', '')}"
-        for v in violations
-    }
-    if not choices:
-        choices = {"s3-staging-analytics|data_residency": "s3-staging-analytics / data_residency"}
+    def _dict_to_cloud_resource(d: dict[str, Any]) -> CloudResource:
+        """Convert parsed Terraform dict to CloudResource."""
+        return CloudResource(
+            resource_id=str(d.get("resource_id", "")),
+            resource_type=str(d.get("resource_type", "unknown")),
+            region=str(d.get("region", "us-east-1")),
+            encryption_enabled=bool(d.get("encryption_enabled", False)),
+            cmk_key_id=None,
+            is_public=bool(d.get("is_public", False)),
+            tags=dict(d.get("tags") or {}),
+        )
+
+    @reactive.calc
+    def active_resources() -> list[CloudResource]:
+        f = input.tf_upload()
+        if f is None or len(f) == 0:
+            return RESOURCES
+        try:
+            parsed = parse_terraform(f[0]["datapath"])
+            if not parsed:
+                return RESOURCES
+            return [_dict_to_cloud_resource(d) for d in parsed]
+        except Exception:
+            return RESOURCES
+
+    @render.text
+    def upload_status() -> str:
+        f = input.tf_upload()
+        if f is None or len(f) == 0:
+            return "Using synthetic demo data"
+        r = active_resources()
+        return f"Loaded {len(r)} resources from {f[0]['name']}"
+
+    @reactive.calc
+    def _violations() -> list[dict[str, Any]]:
+        v = evaluate(active_resources()) if _USE_REAL_MODULES and evaluate else []
+        if not v:
+            v = [{"resource_id": "s3-staging-analytics", "violation_type": "data_residency", "severity": "HIGH"}]
+        return v
+
+    @reactive.calc
+    def _violation_choices() -> dict[str, str]:
+        violations = _violations()
+        choices = {
+            f"{v.get('resource_id', '')}|{v.get('violation_type', '')}": f"{v.get('resource_id', '')} / {v.get('violation_type', '')}"
+            for v in violations
+        }
+        if not choices:
+            choices = {"s3-staging-analytics|data_residency": "s3-staging-analytics / data_residency"}
+        return choices
 
     @reactive.effect
     def _update_violation_choices() -> None:
-        ui.update_select("violation_select", choices=choices)
+        ui.update_select("violation_select", choices=_violation_choices())
 
     agent_result: reactive.Value[dict[str, Any] | None] = reactive.Value(None)
 
@@ -458,12 +563,13 @@ def server(input: Any, output: Any, session: Any) -> None:
         parts = str(sel).split("|", 1)
         rid = parts[0] if len(parts) > 0 else ""
         vtype = parts[1] if len(parts) > 1 else ""
-        out = _run_agents(rid, vtype)
+        out = _run_agents(rid, vtype, active_resources())
         agent_result.set(out)
 
     @render.table
     def catalogue_table() -> Any:
         import pandas as pd
+        resources = active_resources()
         rows = [
             {
                 "resource_id": r.resource_id,
@@ -472,7 +578,7 @@ def server(input: Any, output: Any, session: Any) -> None:
                 "encryption_enabled": r.encryption_enabled,
                 "is_public": r.is_public,
             }
-            for r in RESOURCES
+            for r in resources
         ]
         return pd.DataFrame(rows)
 
