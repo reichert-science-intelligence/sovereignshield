@@ -232,7 +232,7 @@ class _PortfolioApp:
 
 _PORTFOLIO_APPS: list[_PortfolioApp] = [
     _PortfolioApp("AuditShield Live", "RADV Audit Defense Platform", "https://huggingface.co/spaces/rreichert/auditshield-live", "QR_AuditShield_Live.b64.txt"),
-    _PortfolioApp("StarGuard Desktop", "MA Intelligence Platform", "https://rreichert-starguard-desktop.hf.space", "QR_SovereignShield_Desktop.b64.txt"),
+    _PortfolioApp("StarGuard Desktop", "MA Intelligence Platform", "https://rreichert-starguard-desktop.hf.space", "QR_StarGuard_Desktop.b64.txt"),
     _PortfolioApp("StarGuard Mobile", "MA Intelligence on Mobile", "https://rreichert-starguardai.hf.space", "QR_Mobile_Tiny_Sized.b64.txt"),
     _PortfolioApp("SovereignShield Mobile", "Sovereign Cloud Compliance", "https://rreichert-sovereignshield-mobile.hf.space", "QR_SovereignShield_Mobile.b64.txt"),
 ]
