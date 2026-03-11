@@ -45,6 +45,34 @@ from project.sovereignshield.models import CloudResource
 
 # Full 5-resource catalogue
 
+DEFAULT_OPA_POLICY: str = """
+package sovereignshield.compliance
+
+default allow = false
+
+allow {
+    input.encryption_enabled == true
+    input.is_public == false
+    input.region in {"us-east-1", "us-west-2", "us-gov-west-1"}
+}
+
+violation[msg] {
+    input.encryption_enabled == false
+    msg := sprintf("Resource %v: encryption not enabled", [input.resource_id])
+}
+
+violation[msg] {
+    input.is_public == true
+    msg := sprintf("Resource %v: resource is publicly accessible", [input.resource_id])
+}
+
+violation[msg] {
+    not input.region in {"us-east-1", "us-west-2", "us-gov-west-1"}
+    msg := sprintf("Resource %v: region %v not in approved list", 
+                   [input.resource_id, input.region])
+}
+"""
+
 
 def parse_terraform(file_path: str) -> list[dict[str, Any]]:
     """
@@ -183,7 +211,7 @@ def _effective_log(limit: int = 10) -> list[dict[str, Any]]:
     return list(_SEED_EVENTS)[:limit]
 
 
-def _run_agents(resource_id: str, violation_type: str) -> dict[str, Any]:
+def _run_agents(resource_id: str, violation_type: str, resources: list[CloudResource], policy: str | None = None) -> dict[str, Any]:
     """
     Run real agent loop: evaluate → planner → worker → reviewer.
     Returns dict with trace, verdict, checks_passed, checks_failed, etc.
@@ -199,7 +227,7 @@ def _run_agents(resource_id: str, violation_type: str) -> dict[str, Any]:
             "work": None,
         }
 
-    violations = evaluate(resources)
+    violations = evaluate(resources, policy)
     selected = next(
         (
             v
@@ -460,10 +488,39 @@ app_ui = ui.page_fluid(
                     title="Controls",
                     width=280,
                 ),
-                ui.card(
-                    ui.card_header("Waterfall trace"),
-                    ui.output_text("trace_output"),
-                    ui.output_text("verdict_output"),
+                ui.div(
+                    ui.accordion(
+                        ui.accordion_panel(
+                            "⚙️ OPA Policy Editor",
+                            ui.tags.p(
+                                "Edit the active compliance policy below. "
+                                "Click Apply Policy to rerun checks.",
+                                style="color:#aaa; font-size:0.85rem; margin-bottom:8px;",
+                            ),
+                            ui.input_text_area(
+                                "opa_policy_editor",
+                                label=None,
+                                value="",
+                                rows=12,
+                                width="100%",
+                                placeholder="Loading policy...",
+                            ),
+                            ui.input_action_button(
+                                "apply_policy",
+                                "⚡ Apply Policy",
+                                style="background:#4A3E8F; color:white; "
+                                      "border:none; padding:8px 20px; "
+                                      "border-radius:6px; margin-top:8px;",
+                            ),
+                            ui.output_text("policy_status"),
+                        ),
+                        open=False,
+                    ),
+                    ui.card(
+                        ui.card_header("Waterfall trace"),
+                        ui.output_text("trace_output"),
+                        ui.output_text("verdict_output"),
+                    ),
                 ),
             ),
             _footer(),
@@ -497,6 +554,23 @@ app_ui = ui.page_fluid(
 
 
 def server(input: Any, output: Any, session: Any) -> None:
+    active_policy: reactive.Value[str] = reactive.Value(DEFAULT_OPA_POLICY)
+
+    @reactive.effect
+    def _init_policy() -> None:
+        ui.update_text_area("opa_policy_editor", value=DEFAULT_OPA_POLICY)
+
+    @reactive.effect
+    @reactive.event(input.apply_policy)
+    def _apply_policy() -> None:
+        active_policy.set(input.opa_policy_editor())
+
+    @render.text
+    def policy_status() -> str:
+        if input.apply_policy() > 0:
+            return "✅ Policy applied — rerunning checks"
+        return ""
+
     def _dict_to_cloud_resource(d: dict[str, Any]) -> CloudResource:
         """Convert parsed Terraform dict to CloudResource."""
         return CloudResource(
@@ -532,7 +606,7 @@ def server(input: Any, output: Any, session: Any) -> None:
 
     @reactive.calc
     def _violations() -> list[dict[str, Any]]:
-        v = evaluate(active_resources()) if _USE_REAL_MODULES and evaluate else []
+        v = evaluate(active_resources(), active_policy()) if _USE_REAL_MODULES and evaluate else []
         if not v:
             v = [{"resource_id": "s3-staging-analytics", "violation_type": "data_residency", "severity": "HIGH"}]
         return v
@@ -563,7 +637,7 @@ def server(input: Any, output: Any, session: Any) -> None:
         parts = str(sel).split("|", 1)
         rid = parts[0] if len(parts) > 0 else ""
         vtype = parts[1] if len(parts) > 1 else ""
-        out = _run_agents(rid, vtype, active_resources())
+        out = _run_agents(rid, vtype, active_resources(), active_policy())
         agent_result.set(out)
 
     @render.table

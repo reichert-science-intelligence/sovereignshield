@@ -1,14 +1,29 @@
 """OPA-style policy evaluation — evaluates CloudResource objects against sovereign policies.
 
 Pure Python inline policy rules (no OPA subprocess). Returns typed Violation objects
-for downstream agents and audit storage.
+for downstream agents and audit storage. Supports optional policy override for allowed regions.
 """
 
 from __future__ import annotations
 
+import re
 from typing import Any, Literal, TypedDict
 
 _ALLOWED_REGIONS = frozenset({"us-east-1", "us-gov-east-1"})
+
+
+def _parse_allowed_regions_from_policy(policy: str | None) -> frozenset[str]:
+    """Extract allowed regions from Rego policy string. Falls back to _ALLOWED_REGIONS if parse fails."""
+    if not policy or not policy.strip():
+        return _ALLOWED_REGIONS
+    # Match: in {"us-east-1", "us-west-2", "us-gov-west-1"} or similar
+    m = re.search(r'in\s*\{\s*([^}]+)\s*\}', policy)
+    if m:
+        inner = m.group(1)
+        regions = [r.strip().strip('"') for r in inner.split(",") if r.strip()]
+        if regions:
+            return frozenset(regions)
+    return _ALLOWED_REGIONS
 
 
 class Violation(TypedDict):
@@ -116,22 +131,25 @@ def _tags(attrs: dict[str, Any]) -> dict[str, str]:
     return {}
 
 
-def evaluate(resources: list[Any]) -> list[Violation]:
-    """Evaluate resources against sovereign policies. Returns list of Violation dicts."""
+def evaluate(resources: list[Any], policy: str | None = None) -> list[Violation]:
+    """Evaluate resources against sovereign policies. Returns list of Violation dicts.
+    When policy is provided, parses allowed regions from the Rego string (input.region in {...}).
+    """
     violations: list[Violation] = []
+    allowed_regions = _parse_allowed_regions_from_policy(policy)
 
     for res in resources:
         rid, res_type, attrs = _normalize_resource(res)
 
         region = _get_region(attrs)
-        if region and region not in _ALLOWED_REGIONS:
+        if region and region not in allowed_regions:
             violations.append(
                 Violation(
                     resource_id=rid,
                     violation_type="data_residency",
                     severity="HIGH",
                     regulation_cited="HIPAA §164.312(a)(1)",
-                    detail=f"Region '{region}' not in allowed sovereign regions {sorted(_ALLOWED_REGIONS)}",
+                    detail=f"Region '{region}' not in allowed sovereign regions {sorted(allowed_regions)}",
                 )
             )
 
