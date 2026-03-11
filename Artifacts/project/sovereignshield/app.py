@@ -256,15 +256,17 @@ _AVATAR_SRC: str = _load_avatar()
 
 
 def _load_qr(filename: str) -> str:
-    """Load base64 PNG from assets/*.b64.txt. Handles whitespace, newlines, data URI prefix."""
+    """Load base64 image from assets/*.b64.txt. Handles whitespace, newlines, JPEG vs PNG."""
     try:
         assets_dir = os.path.join(os.path.dirname(__file__), "assets")
         path = os.path.join(assets_dir, filename)
         with open(path, "r") as f:
-            data = f.read().strip().replace("\n", "").replace("\r", "")
-        if not data.startswith("data:"):
-            data = f"data:image/png;base64,{data}"
-        return data
+            raw = f.read().strip().replace("\n", "").replace("\r", "")
+        if raw.startswith("data:"):
+            return raw
+        # JPEG base64 starts with /9j/; PNG with iVBORw0KGgo
+        mime = "image/jpeg" if raw.startswith("/9j/") else "image/png"
+        return f"data:{mime};base64,{raw}"
     except Exception:
         return ""
 
@@ -344,7 +346,7 @@ def _about_ui() -> Any:
                 ui.p("Typical engagement: 4–8 weeks", style="margin-top: 8px;"),
             ),
             ui.accordion_panel(
-                "HEDIS/RADV Analytics Consulting — $100/hr",
+                "HEDIS/RADV Analytics Consulting — Consulting Rate",
                 ui.p("Healthcare quality measure analytics, RADV exposure scoring, and star rating optimization."),
                 ui.tags.ul(ui.tags.li("HEDIS measure analysis"), ui.tags.li("RADV scenario modeling"), ui.tags.li("ROI projections")),
                 ui.p("Typical engagement: 2–6 weeks", style="margin-top: 8px;"),
