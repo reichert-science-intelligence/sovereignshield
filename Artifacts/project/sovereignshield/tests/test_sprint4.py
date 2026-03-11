@@ -1,18 +1,20 @@
 """Sprint 4 CI hardening — parse_terraform, generate_report, DEFAULT_OPA_POLICY."""
+from __future__ import annotations
+
+import json
+import sys
 from pathlib import Path
 
 import pytest
 
-_root = Path(__file__).resolve().parent.parent
-if str(_root) not in __import__("sys").path:
-    __import__("sys").path.insert(0, str(_root))
+_artifacts = Path(__file__).resolve().parents[3]
+if str(_artifacts) not in sys.path:
+    sys.path.insert(0, str(_artifacts))
 
 
 # 1. parse_terraform — .tfstate parsing
 def test_parse_terraform_tfstate(tmp_path):
     """parse_terraform correctly parses a .tfstate file."""
-    import json
-
     tfstate = {
         "resources": [
             {
@@ -31,7 +33,7 @@ def test_parse_terraform_tfstate(tmp_path):
     }
     f = tmp_path / "main.tfstate"
     f.write_text(json.dumps(tfstate))
-    from app import parse_terraform
+    from project.sovereignshield.app import parse_terraform
 
     result = parse_terraform(str(f))
     assert len(result) == 1
@@ -52,7 +54,7 @@ resource "aws_rds_instance" "my_db" {
 '''
     f = tmp_path / "main.tf"
     f.write_text(tf_content)
-    from app import parse_terraform
+    from project.sovereignshield.app import parse_terraform
 
     result = parse_terraform(str(f))
     assert len(result) == 2
@@ -66,7 +68,7 @@ def test_parse_terraform_empty_fallback(tmp_path):
     """parse_terraform returns empty list on empty file."""
     f = tmp_path / "empty.tf"
     f.write_text("")
-    from app import parse_terraform
+    from project.sovereignshield.app import parse_terraform
 
     result = parse_terraform(str(f))
     assert isinstance(result, list)
@@ -77,7 +79,7 @@ def test_parse_terraform_invalid_json_fallback(tmp_path):
     """parse_terraform returns empty list on invalid JSON."""
     f = tmp_path / "bad.tfstate"
     f.write_text("not valid json {{{{")
-    from app import parse_terraform
+    from project.sovereignshield.app import parse_terraform
 
     result = parse_terraform(str(f))
     assert isinstance(result, list)
@@ -86,7 +88,7 @@ def test_parse_terraform_invalid_json_fallback(tmp_path):
 # 5. generate_report — returns bytes
 def test_generate_report_returns_bytes():
     """generate_report returns non-empty PDF bytes."""
-    from pdf_report import generate_report
+    from project.sovereignshield.pdf_report import generate_report
 
     results = [
         {
@@ -113,7 +115,7 @@ def test_generate_report_returns_bytes():
 # 6. generate_report — PDF header signature
 def test_generate_report_pdf_signature():
     """generate_report output starts with PDF magic bytes."""
-    from pdf_report import generate_report
+    from project.sovereignshield.pdf_report import generate_report
 
     pdf_bytes = generate_report([], "policy", "demo")
     assert pdf_bytes[:4] == b"%PDF"
@@ -122,7 +124,7 @@ def test_generate_report_pdf_signature():
 # 7. generate_report — empty batch results
 def test_generate_report_empty_results():
     """generate_report handles empty batch results without error."""
-    from pdf_report import generate_report
+    from project.sovereignshield.pdf_report import generate_report
 
     pdf_bytes = generate_report([], "package test", "demo data")
     assert isinstance(pdf_bytes, bytes)
@@ -132,7 +134,7 @@ def test_generate_report_empty_results():
 # 8. DEFAULT_OPA_POLICY — content check
 def test_default_opa_policy_content():
     """DEFAULT_OPA_POLICY contains required Rego keywords."""
-    from app import DEFAULT_OPA_POLICY
+    from project.sovereignshield.app import DEFAULT_OPA_POLICY
 
     assert "package" in DEFAULT_OPA_POLICY
     assert "violation" in DEFAULT_OPA_POLICY
