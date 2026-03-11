@@ -13,7 +13,7 @@ if str(_artifacts) not in sys.path:
 
 
 # 1. parse_terraform — .tfstate parsing
-def test_parse_terraform_tfstate(tmp_path):
+def test_parse_terraform_tfstate(tmp_path: Path) -> None:
     """parse_terraform correctly parses a .tfstate file."""
     tfstate = {
         "resources": [
@@ -42,7 +42,7 @@ def test_parse_terraform_tfstate(tmp_path):
 
 
 # 2. parse_terraform — .tf file parsing
-def test_parse_terraform_tf(tmp_path):
+def test_parse_terraform_tf(tmp_path: Path) -> None:
     """parse_terraform correctly parses a .tf file."""
     tf_content = '''
 resource "aws_s3_bucket" "my_bucket" {
@@ -64,7 +64,7 @@ resource "aws_rds_instance" "my_db" {
 
 
 # 3. parse_terraform — fallback on empty file
-def test_parse_terraform_empty_fallback(tmp_path):
+def test_parse_terraform_empty_fallback(tmp_path: Path) -> None:
     """parse_terraform returns empty list on empty file."""
     f = tmp_path / "empty.tf"
     f.write_text("")
@@ -75,7 +75,7 @@ def test_parse_terraform_empty_fallback(tmp_path):
 
 
 # 4. parse_terraform — fallback on invalid JSON
-def test_parse_terraform_invalid_json_fallback(tmp_path):
+def test_parse_terraform_invalid_json_fallback(tmp_path: Path) -> None:
     """parse_terraform returns empty list on invalid JSON."""
     f = tmp_path / "bad.tfstate"
     f.write_text("not valid json {{{{")
@@ -86,7 +86,7 @@ def test_parse_terraform_invalid_json_fallback(tmp_path):
 
 
 # 5. generate_report — returns bytes
-def test_generate_report_returns_bytes():
+def test_generate_report_returns_bytes() -> None:
     """generate_report returns non-empty PDF bytes."""
     from project.sovereignshield.pdf_report import generate_report
 
@@ -113,7 +113,7 @@ def test_generate_report_returns_bytes():
 
 
 # 6. generate_report — PDF header signature
-def test_generate_report_pdf_signature():
+def test_generate_report_pdf_signature() -> None:
     """generate_report output starts with PDF magic bytes."""
     from project.sovereignshield.pdf_report import generate_report
 
@@ -122,7 +122,7 @@ def test_generate_report_pdf_signature():
 
 
 # 7. generate_report — empty batch results
-def test_generate_report_empty_results():
+def test_generate_report_empty_results() -> None:
     """generate_report handles empty batch results without error."""
     from project.sovereignshield.pdf_report import generate_report
 
@@ -132,7 +132,7 @@ def test_generate_report_empty_results():
 
 
 # 8. DEFAULT_OPA_POLICY — content check
-def test_default_opa_policy_content():
+def test_default_opa_policy_content() -> None:
     """DEFAULT_OPA_POLICY contains required Rego keywords."""
     from project.sovereignshield.app import DEFAULT_OPA_POLICY
 
