@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Any
 from reportlab.lib.pagesizes import letter
 from reportlab.lib import colors
-from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
@@ -33,7 +33,6 @@ def generate_report(
         topMargin=0.75 * inch,
         bottomMargin=0.75 * inch
     )
-    styles = getSampleStyleSheet()
     story: list[Any] = []
 
     # Header

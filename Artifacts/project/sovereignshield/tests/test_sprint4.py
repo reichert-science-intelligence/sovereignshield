@@ -5,8 +5,6 @@ import json
 import sys
 from pathlib import Path
 
-import pytest
-
 _artifacts = Path(__file__).resolve().parents[3]
 if str(_artifacts) not in sys.path:
     sys.path.insert(0, str(_artifacts))
