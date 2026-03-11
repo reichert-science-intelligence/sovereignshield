@@ -1,10 +1,11 @@
 """Sprint 4 CI hardening — parse_terraform, generate_report, DEFAULT_OPA_POLICY."""
-import os
-import sys
+from pathlib import Path
 
 import pytest
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "Artifacts", "project", "sovereignshield"))
+_root = Path(__file__).resolve().parent.parent
+if str(_root) not in __import__("sys").path:
+    __import__("sys").path.insert(0, str(_root))
 
 
 # 1. parse_terraform — .tfstate parsing
