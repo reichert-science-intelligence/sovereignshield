@@ -540,6 +540,13 @@ app_ui = ui.page_fluid(
             ui.layout_sidebar(
                 ui.sidebar(
                     ui.input_action_button("refresh_btn", "Refresh"),
+                    ui.download_button(
+                        "export_pdf",
+                        "📄 Export Remediation Report",
+                        style="background:#4A3E8F; color:white; border:none; "
+                              "padding:10px 24px; border-radius:8px; "
+                              "margin-top:16px; width:100%;"
+                    ),
                     title="System",
                     width=200,
                 ),
@@ -716,7 +723,8 @@ def server(input: Any, output: Any, session: Any) -> None:
                     resources,
                     active_policy(),
                 )
-                verdict = out.get("verdict", "ERROR")
+                raw = out.get("verdict", "ERROR")
+                verdict = "COMPLIANT" if raw == "APPROVED" else raw
                 mttr = round(time.time() - start, 1)
             except Exception:
                 verdict = "ERROR"
@@ -828,6 +836,33 @@ def server(input: Any, output: Any, session: Any) -> None:
             if c not in df.columns:
                 df[c] = ""
         return df[[c for c in cols if c in df.columns]]
+
+    @render.download(filename=lambda: f"sovereignshield_report_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf")
+    async def export_pdf():
+        from pdf_report import generate_report
+        results = batch_results()
+        if not results:
+            resources = active_resources()
+            results = [
+                {
+                    "resource_id": r.resource_id,
+                    "resource_type": r.resource_type,
+                    "verdict": "NOT RUN",
+                    "violations": 0,
+                    "mttr_seconds": 0,
+                }
+                for r in resources
+            ]
+        tf = input.tf_upload()
+        source_filename = (
+            tf[0]["name"] if tf and len(tf) > 0 else "synthetic demo data"
+        )
+        pdf_bytes = generate_report(
+            batch_results=results,
+            policy_text=active_policy(),
+            source_filename=source_filename,
+        )
+        yield pdf_bytes
 
 
 app = App(app_ui, server, debug=True)
