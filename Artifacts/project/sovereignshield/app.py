@@ -23,6 +23,7 @@ _USE_REAL_MODULES = True
 try:
     from project.sovereignshield.core.opa_eval import evaluate
     from project.sovereignshield.core.audit_db import db
+    from project.sovereignshield.core.audit_log import write_run, fetch_history
     from project.sovereignshield.agents.planner import planner
     from project.sovereignshield.agents.worker import worker
     from project.sovereignshield.agents.reviewer import reviewer
@@ -31,6 +32,8 @@ except ImportError:
     _USE_REAL_MODULES = False
     evaluate = None
     db = None
+    write_run = None  # type: ignore[assignment]
+    fetch_history = None  # type: ignore[assignment]
     planner = None
     worker = None
     reviewer = None
@@ -562,6 +565,22 @@ app_ui = ui.page_fluid(
             _footer(),
         ),
         ui.nav_panel(
+            "History",
+            ui.layout_sidebar(
+                ui.sidebar(
+                    ui.input_action_button("history_refresh_btn", "Refresh"),
+                    title="History",
+                    width=200,
+                ),
+                ui.output_ui("history_record_status"),
+                ui.card(
+                    ui.card_header("Past runs — compliance trending"),
+                    ui.output_table("history_table"),
+                ),
+            ),
+            _footer(),
+        ),
+        ui.nav_panel(
             "About",
             _about_ui(),
         ),
@@ -736,6 +755,15 @@ def server(input: Any, output: Any, session: Any) -> None:
                 "mttr_seconds": mttr,
             })
         batch_results.set(results)
+        # Sprint 6: Persist to Supabase audit_runs + audit_results
+        if results and write_run is not None:
+            tf = input.tf_upload()
+            source_filename = tf[0]["name"] if tf and len(tf) > 0 else ""
+            write_run(
+                batch_results=results,
+                source_filename=source_filename,
+                policy_text=active_policy(),
+            )
 
     @reactive.effect
     @reactive.event(input.run_btn)
@@ -862,6 +890,84 @@ def server(input: Any, output: Any, session: Any) -> None:
             source_filename=source_filename,
         )
         yield pdf_bytes
+
+    # ── Sprint 6: Record run & History ───────────────────────────────────
+    record_run_status: reactive.Value[str] = reactive.Value("")
+    history_refresh_trigger: reactive.Value[int] = reactive.Value(0)
+
+    @reactive.effect
+    @reactive.event(input.record_run_btn)
+    def _on_record_run() -> None:
+        results = batch_results()
+        if not results:
+            record_run_status.set("No resources to record. Run batch remediation first.")
+            return
+        tf = input.tf_upload()
+        source_filename = tf[0]["name"] if tf and len(tf) > 0 else ""
+        run_id = None
+        if write_run is not None:
+            run_id = write_run(
+                batch_results=results,
+                source_filename=source_filename,
+                policy_text=active_policy(),
+            )
+        if run_id:
+            record_run_status.set(f"Run recorded (id: {run_id[:8]}...)")
+            history_refresh_trigger.set(history_refresh_trigger() + 1)
+        else:
+            record_run_status.set(
+                "Supabase unavailable or tables missing. Check env and run audit_runs_schema.sql."
+            )
+
+    @reactive.effect
+    @reactive.event(input.history_refresh_btn)
+    def _on_history_refresh() -> None:
+        history_refresh_trigger.set(history_refresh_trigger() + 1)
+
+    @render.ui
+    def history_record_status() -> Any:
+        msg = record_run_status()
+        if not msg:
+            return ui.div()
+        color = "#10B981" if "recorded" in msg.lower() else "#EF4444"
+        return ui.p(msg, style=f"color:{color}; margin-bottom:12px;")
+
+    @reactive.calc
+    def _history_runs() -> list[dict[str, Any]]:
+        history_refresh_trigger()
+        if fetch_history is not None:
+            return fetch_history(limit=50)
+        return []
+
+    @render.table
+    def history_table() -> Any:
+        import pandas as pd
+        runs = _history_runs()
+        if not runs:
+            return pd.DataFrame(columns=["run_at", "total", "compliance_rate", "avg_mttr", "trend"])
+        rows = []
+        for r in runs:
+            run_at = r.get("run_at", "")
+            if run_at:
+                try:
+                    if hasattr(run_at, "strftime"):
+                        run_at = run_at.strftime("%Y-%m-%d %H:%M")
+                    else:
+                        run_at = str(run_at)[:19]
+                except Exception:
+                    run_at = str(run_at)[:19]
+            rate = r.get("compliance_rate", 0)
+            mttr = r.get("avg_mttr_seconds", 0) or 0
+            trend = r.get("trending", "stable")
+            arrow = "↑" if trend == "up" else "↓" if trend == "down" else "−"
+            rows.append({
+                "run_at": run_at,
+                "total": r.get("total_resources", 0),
+                "compliance_rate": f"{rate:.1f}%",
+                "avg_mttr": f"{float(mttr):.1f}s",
+                "trend": arrow,
+            })
+        return pd.DataFrame(rows)
 
 
 app = App(app_ui, server, debug=True)
