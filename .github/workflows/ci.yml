@@ -31,6 +31,13 @@ jobs:
       - name: Mypy typecheck
         run: PYTHONPATH=Artifacts mypy Artifacts/project/sovereignshield/ --strict --ignore-missing-imports
 
+      - name: Install OPA
+        run: |
+          curl -L -o /usr/local/bin/opa \
+            https://openpolicyagent.org/downloads/latest/opa_linux_amd64_static
+          chmod +x /usr/local/bin/opa
+          opa version
+
       - name: Pytest
         run: PYTHONPATH=Artifacts pytest Artifacts/project/sovereignshield/tests/ -v --tb=short --cov=project.sovereignshield --cov-report=term-missing
 
