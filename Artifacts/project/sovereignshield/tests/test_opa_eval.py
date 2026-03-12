@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -27,7 +28,7 @@ from sovereignshield.core.opa_eval import (  # noqa: E402
 # ── Unit tests (mock subprocess) ──────────────────────────────────────────────
 
 
-def test_normalize_resource_adds_defaults():
+def test_normalize_resource_adds_defaults() -> None:
     """_normalize_resource adds tags, region, encryption_enabled, is_public if missing."""
     r = {"resource_id": "s3-x"}
     out = _normalize_resource(r)
@@ -38,7 +39,7 @@ def test_normalize_resource_adds_defaults():
     assert out["resource_id"] == "s3-x"
 
 
-def test_normalize_resource_preserves_existing():
+def test_normalize_resource_preserves_existing() -> None:
     """_normalize_resource preserves existing fields."""
     r = {
         "resource_id": "ec2-y",
@@ -53,7 +54,7 @@ def test_normalize_resource_preserves_existing():
     assert out["tags"] == {"DataClass": "PHI"}
 
 
-def test_violation_str_to_dict():
+def test_violation_str_to_dict() -> None:
     """_violation_str_to_dict parses 'violation_type|message' into app dict."""
     d = _violation_str_to_dict("s3-staging", "data_residency|GDPR Art. 44")
     assert d["resource_id"] == "s3-staging"
@@ -63,7 +64,7 @@ def test_violation_str_to_dict():
     assert "data_residency" in d["detail"]
 
 
-def test_violation_str_to_dict_single_part():
+def test_violation_str_to_dict_single_part() -> None:
     """_violation_str_to_dict handles string without pipe."""
     d = _violation_str_to_dict("r1", "unknown_violation")
     assert d["violation_type"] == "unknown_violation"
@@ -71,9 +72,9 @@ def test_violation_str_to_dict_single_part():
 
 
 @patch("sovereignshield.core.opa_eval.subprocess.run")
-def test_evaluate_parses_opa_output(mock_run):
+def test_evaluate_parses_opa_output(mock_run: Any) -> None:
     """evaluate parses OPA JSON output into violation dicts."""
-    opa_result = {
+    opa_result: dict[str, Any] = {
         "result": [
             {
                 "expressions": [
@@ -108,7 +109,7 @@ def test_evaluate_parses_opa_output(mock_run):
 
 
 @patch("sovereignshield.core.opa_eval.subprocess.run")
-def test_evaluate_handles_opa_error(mock_run):
+def test_evaluate_handles_opa_error(mock_run: Any) -> None:
     """evaluate returns opa_error violation when OPA returns non-zero."""
     mock_run.return_value = type("R", (), {"returncode": 1, "stdout": "", "stderr": "policy compile error"})()
 
@@ -119,9 +120,9 @@ def test_evaluate_handles_opa_error(mock_run):
 
 
 @patch("sovereignshield.core.opa_eval.subprocess.run")
-def test_evaluate_empty_violations(mock_run):
+def test_evaluate_empty_violations(mock_run: Any) -> None:
     """evaluate returns empty list when OPA returns no violations."""
-    opa_result = {"result": [{"expressions": [{"value": []}]}]}
+    opa_result: dict[str, Any] = {"result": [{"expressions": [{"value": []}]}]}
     mock_run.return_value = type("R", (), {"returncode": 0, "stdout": json.dumps(opa_result), "stderr": ""})()
 
     resources = [
@@ -171,7 +172,7 @@ def test_evaluate_integration_violation():
 
 
 @pytest.mark.skipif(not _opa_available(), reason="OPA binary not installed")
-def test_evaluate_integration_compliant():
+def test_evaluate_integration_compliant() -> None:
     """Integration: real OPA returns no violations for fully compliant resource."""
     resources = [
         {
