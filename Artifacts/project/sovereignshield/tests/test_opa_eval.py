@@ -151,7 +151,7 @@ def _opa_available() -> bool:
 
 
 @pytest.mark.skipif(not _opa_available(), reason="OPA binary not installed")
-def test_evaluate_integration_violation():
+def test_evaluate_integration_violation() -> None:
     """Integration: real OPA finds violations for non-compliant resource."""
     resources = [
         {
