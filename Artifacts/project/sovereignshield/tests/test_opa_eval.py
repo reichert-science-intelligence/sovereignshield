@@ -17,7 +17,7 @@ _root = Path(__file__).resolve().parents[2]
 if str(_root) not in sys.path:
     sys.path.insert(0, str(_root))
 
-from sovereignshield.core.opa_eval import (
+from sovereignshield.core.opa_eval import (  # noqa: E402
     _normalize_resource,
     _violation_str_to_dict,
     evaluate,
