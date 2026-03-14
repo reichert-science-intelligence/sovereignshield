@@ -23,7 +23,6 @@ _USE_REAL_MODULES = True
 try:
     from project.sovereignshield.core.opa_eval import evaluate
     from project.sovereignshield.core.audit_db import db
-    from project.sovereignshield.core.audit_log import write_run, fetch_history
     from project.sovereignshield.agents.planner import planner
     from project.sovereignshield.agents.worker import worker
     from project.sovereignshield.agents.reviewer import reviewer
@@ -32,13 +31,19 @@ except ImportError:
     _USE_REAL_MODULES = False
     evaluate = None
     db = None
-    write_run = None  # type: ignore[assignment]
-    fetch_history = None  # type: ignore[assignment]
     planner = None
     worker = None
     reviewer = None
     embed_and_store = None
     retrieve_similar = None
+
+try:
+    from project.sovereignshield.core.audit_log import write_run, fetch_history
+    AUDIT_LOG_AVAILABLE = True
+except Exception:
+    AUDIT_LOG_AVAILABLE = False
+    write_run = None  # type: ignore[assignment]
+    fetch_history = None  # type: ignore[assignment]
 
 try:
     from shiny import App, reactive, render, ui

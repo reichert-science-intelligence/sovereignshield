@@ -6,6 +6,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential curl git \
     && rm -rf /var/lib/apt/lists/*
 
+RUN curl -L -o /usr/local/bin/opa \
+    https://github.com/open-policy-agent/opa/releases/download/v0.70.0/opa_linux_amd64_static \
+    && chmod +x /usr/local/bin/opa \
+    && opa version
+
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir \
        shiny shinyswatch \

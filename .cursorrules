@@ -1,5 +1,33 @@
 # Engineering Hardening Standards — reichert-science-intelligence
 
+---
+
+## Prompt Level Recommendation Engine (Run First on Every Prompt)
+
+**Read the user's prompt prefix and content. Classify and respond:**
+
+### Signal Table (Domain-Specific)
+
+| Level | Signals (keywords/phrases) |
+|-------|----------------------------|
+| **HIGH** | SQL, schema, migrate, RLS, auth, OPA, Rego, Terraform, Supabase, batch remediation, HuggingFace, reactive chain, @reactive, credentials, API key, token, policy engine, compliance rule, audit trail, gap trail |
+| **MED** | refactor, new module, pyproject, dependency, test suite, CI/CD, workflow |
+| **LOW** | CSS, color, font, padding, margin, layout, style, button, modal, UI-only, copy change, typos |
+
+### Four Behaviors
+
+| Scenario | Claude response |
+|----------|------------------|
+| User prefix **[LOW]**, prompt is UI-only | Silent — levels match, proceed |
+| User prefix **[LOW]**, prompt has MED signals | Header: *"You should be at MED, not LOW."* → proceed or offer escalate |
+| User prefix **[LOW]**, prompt has HIGH signals | Header: *"You sent LOW, this reads as HIGH — escalate."* → then proceed or offer y/escalate |
+| User prefix **[HIGH]**, prompt is trivial (e.g. color change) | Header: *"Downgrade to LOW recommended — saves tokens"* → then proceed |
+| **No prefix** | State detected level and proceed — no waiting |
+
+The recommendation fires on the first read of every prompt, before any code is written.
+
+---
+
 After every feature phase ships, run the Hardening Sprint before starting the next phase.
 
 ---
