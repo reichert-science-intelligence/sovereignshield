@@ -163,18 +163,25 @@ class ReviewerAgent:
                 messages=[{"role": "user", "content": user_content}],
             )
         except Exception as e:
+            err_msg = str(e).lower()
+            if any(k in err_msg for k in ("credit", "400", "insufficient", "billing")):
+                notes = "Agent unavailable — API credits required. Showing synthetic verdict for demo."
+                checks_failed = ["API credits required"]
+            else:
+                notes = f"Claude call failed: {e!s}"
+                checks_failed = [f"Review failed: {e!s}"]
             return ReviewerResult(
                 task_id=task_id,
                 resource_id=resource_id,
                 violation_type=violation_type,
                 verdict="NEEDS_REVISION",
-                notes=f"Claude call failed: {e!s}",
+                notes=notes,
                 is_compliant=False,
                 mttr_seconds=mttr_seconds,
                 tokens_used=0,
                 iteration=iteration,
                 checks_passed=[],
-                checks_failed=[f"Review failed: {e!s}"],
+                checks_failed=checks_failed,
             )
 
         tokens_used = (

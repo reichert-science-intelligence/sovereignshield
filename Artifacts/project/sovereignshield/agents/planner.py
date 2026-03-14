@@ -125,12 +125,17 @@ class PlannerAgent:
                 messages=[{"role": "user", "content": user_prompt}],
             )
         except Exception as e:
+            err = str(e).lower()
+            if "credit" in err or "400" in err or "insufficient" in err:
+                fix_msg = "Agent unavailable — API credits required. Showing synthetic verdict for demo."
+            else:
+                fix_msg = f"[Claude error] {e!s}"
             return PlannerResult(
                 task_id=task_id,
                 resource_id=resource_id,
                 violation_type=violation_type,
                 regulation_cited=regulation_cited_from_violation or "Unknown",
-                fix_strategy=f"[Claude error] {e!s}",
+                fix_strategy=fix_msg,
                 priority="HIGH",
                 rag_hit=rag_hit,
                 rag_source=rag_source,
