@@ -873,7 +873,7 @@ def server(input: Any, output: Any, session: Any) -> None:
         except Exception:
             import matplotlib.pyplot as plt
             fig, ax = plt.subplots(figsize=(6, 4))
-            ax.text(0.5, 0.5, "Chart unavailable", ha="center", va="center", fontsize=12)
+            ax.text(0.5, 0.5, "Chart loading...", ha="center", va="center", fontsize=12)
             ax.axis("off")
             return fig
 

@@ -19,7 +19,7 @@ RUN pip install --no-cache-dir --upgrade pip \
        smolagents \
        chromadb==0.5.23 \
        sentence-transformers==3.0.0 \
-       pandas numpy plotnine \
+       pandas numpy plotnine matplotlib \
        python-hcl2 pyyaml jsonschema \
        sqlalchemy aiosqlite \
        python-dotenv httpx structlog tenacity

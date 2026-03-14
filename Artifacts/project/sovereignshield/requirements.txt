@@ -7,4 +7,6 @@ sentence-transformers>=2.0.0
 python-dotenv>=1.0.0
 pandas>=2.0.0
 plotnine>=0.12
+matplotlib
+numpy
 reportlab>=4.0.0
