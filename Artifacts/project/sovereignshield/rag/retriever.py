@@ -16,32 +16,34 @@ _PERSIST_DIR: str = (
     if os.name != "nt"
     else os.path.join(tempfile.gettempdir(), "chroma_db")
 )
+
 _collection: Optional[Any] = None
 
-chromadb: Optional[Any] = None
-embedding_functions: Optional[Any] = None
-try:
-    import chromadb as _chromadb
-    from chromadb.utils import embedding_functions as _ef_mod
-except ImportError:
-    pass
-else:
-    chromadb = _chromadb
-    embedding_functions = _ef_mod
 
-if chromadb is not None and embedding_functions is not None:
+def _get_collection() -> Optional[Any]:
+    """Lazy-load ChromaDB client and collection to avoid blocking startup."""
+    global _collection
+    if _collection is not None:
+        return _collection
     try:
-        _ef = cast(Any, embedding_functions.SentenceTransformerEmbeddingFunction(
+        import chromadb as _chromadb_mod
+        from chromadb.utils import embedding_functions as _ef_mod
+    except ImportError:
+        return None
+    try:
+        # SentenceTransformerEmbeddingFunction downloads model on first use
+        _ef = cast(Any, _ef_mod.SentenceTransformerEmbeddingFunction(
             model_name="all-MiniLM-L6-v2"
         ))
-        _client = chromadb.PersistentClient(path=_PERSIST_DIR)
+        _client = _chromadb_mod.PersistentClient(path=_PERSIST_DIR)
         _collection = _client.get_or_create_collection(
             name=_COLLECTION_NAME,
             embedding_function=_ef,
-            metadata={"hnsw:space": "cosine"},  # Supported in ChromaDB 0.4.x–1.x
+            metadata={"hnsw:space": "cosine"},
         )
+        return _collection
     except Exception:
-        _collection = None
+        return None
 
 
 def embed_and_store(
@@ -60,7 +62,8 @@ def embed_and_store(
     Returns:
         True on success, False on failure (e.g., ChromaDB/sentence-transformers unavailable).
     """
-    if _collection is None:
+    coll = _get_collection()
+    if coll is None:
         return False
     try:
         doc_id = str(uuid4())
@@ -75,7 +78,7 @@ def embed_and_store(
                 normalized[k] = v
             else:
                 normalized[k] = str(v)
-        _collection.add(
+        coll.add(
             ids=[doc_id],
             documents=[violation_text],
             metadatas=[normalized],
@@ -100,13 +103,14 @@ def retrieve_similar(
         (fix_code, similarity_score) if a hit above threshold exists,
         (None, 0.0) if collection is empty or no hit above threshold.
     """
-    if _collection is None:
+    coll = _get_collection()
+    if coll is None:
         return (None, 0.0)
     try:
-        count = _collection.count()
+        count = coll.count()
         if count == 0:
             return (None, 0.0)
-        results = _collection.query(
+        results = coll.query(
             query_texts=[violation_text],
             n_results=1,
             include=["metadatas", "distances"],
@@ -131,9 +135,10 @@ def retrieve_similar(
 
 def kb_count() -> int:
     """Return the number of documents in the RAG knowledge base."""
-    if _collection is None:
+    coll = _get_collection()
+    if coll is None:
         return 0
     try:
-        return cast(int, _collection.count())
+        return cast(int, coll.count())
     except Exception:
         return 0
