@@ -72,9 +72,20 @@ def _violation_str_to_dict(resource_id: str, vstr: str) -> dict[str, Any]:
     }
 
 
-def _normalize_resource(r: dict[str, Any]) -> dict[str, Any]:
-    """Ensure resource has tags, region, etc. for OPA input."""
-    out = dict(r)
+def _normalize_resource(r: Any) -> dict[str, Any]:
+    """Normalize CloudResource or dict to a plain dict for OPA input."""
+    if isinstance(r, dict):
+        out = dict(r)
+    else:
+        # CloudResource dataclass — convert to dict
+        out = {
+            "resource_id": getattr(r, "resource_id", "unknown"),
+            "resource_type": getattr(r, "resource_type", "unknown"),
+            "region": getattr(r, "region", "us-east-1"),
+            "encryption_enabled": getattr(r, "encryption_enabled", True),
+            "is_public": getattr(r, "is_public", False),
+            "tags": getattr(r, "tags", {}) or {},
+        }
     if "tags" not in out:
         out["tags"] = {}
     if "region" not in out:
@@ -139,8 +150,9 @@ def evaluate(
     policy_text = policy or _DEFAULT_POLICY
     violations: list[dict[str, Any]] = []
     for r in resources:
-        rid = str(r.get("resource_id", "unknown"))
-        raw_violations = _eval_single_resource(r, policy_text)
+        resource_dict = _normalize_resource(r)
+        rid = str(resource_dict.get("resource_id", "unknown"))
+        raw_violations = _eval_single_resource(resource_dict, policy_text)
         for vstr in raw_violations:
             if vstr.startswith("OPA error:") or vstr.startswith("OPA parse error:"):
                 violations.append(
