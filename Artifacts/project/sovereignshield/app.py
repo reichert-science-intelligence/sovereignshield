@@ -487,7 +487,7 @@ app_ui = ui.page_fluid(
             ui.output_ui("batch_results_panel"),
             ui.card(
                 ui.card_header("Resources"),
-                ui.output_table("catalogue_table"),
+                ui.output_ui("catalogue_table"),
             ),
             _footer(),
         ),
@@ -701,14 +701,17 @@ def server(input: Any, output: Any, session: Any) -> None:
 
     @reactive.calc
     def _violation_choices() -> dict[str, str]:
-        violations = _violations()
-        choices = {
-            f"{v.get('resource_id', '')}|{v.get('violation_type', '')}": f"{v.get('resource_id', '')} / {v.get('violation_type', '')}"
-            for v in violations
-        }
-        if not choices:
-            choices = {"s3-staging-analytics|data_residency": "s3-staging-analytics / data_residency"}
-        return choices
+        try:
+            violations = _violations()
+            choices = {
+                f"{v.get('resource_id', '')}|{v.get('violation_type', '')}": f"{v.get('resource_id', '')} / {v.get('violation_type', '')}"
+                for v in violations
+            }
+            if not choices:
+                choices = {"s3-staging-analytics|data_residency": "s3-staging-analytics / data_residency"}
+            return choices
+        except Exception:
+            return {"s3-staging-analytics|data_residency": "s3-staging-analytics / data_residency"}
 
     @reactive.effect
     def _update_violation_choices() -> None:
@@ -782,21 +785,42 @@ def server(input: Any, output: Any, session: Any) -> None:
         out = _run_agents(rid, vtype, active_resources(), active_policy())
         agent_result.set(out)
 
-    @render.table
+    @render.ui
     def catalogue_table() -> Any:
-        import pandas as pd
         resources = active_resources()
-        rows = [
-            {
-                "resource_id": r.resource_id,
-                "resource_type": r.resource_type,
-                "region": r.region,
-                "encryption_enabled": r.encryption_enabled,
-                "is_public": r.is_public,
-            }
-            for r in resources
-        ]
-        return pd.DataFrame(rows)
+        if not resources:
+            return ui.div("No resources loaded.", style="color:#aaa; padding:16px;")
+        try:
+            violations = _violations()
+        except Exception:
+            violations = []
+
+        violation_by_rid: dict[str, list[dict[str, Any]]] = {}
+        for v in violations:
+            rid = str(v.get("resource_id", ""))
+            if rid not in violation_by_rid:
+                violation_by_rid[rid] = []
+            violation_by_rid[rid].append(v)
+
+        cards = []
+        for r in resources:
+            res_violations = violation_by_rid.get(r.resource_id, [])
+            verdict = "COMPLIANT" if not res_violations else "VIOLATIONS"
+            badge_color = "#10B981" if verdict == "COMPLIANT" else "#EF4444"
+            cards.append(
+                ui.div(
+                    ui.div(r.resource_id, style="font-weight:600; margin-bottom:4px;"),
+                    ui.div(f"Type: {r.resource_type} · Region: {r.region}", style="font-size:0.85rem; color:#aaa;"),
+                    ui.div(
+                        f"Encryption: {r.encryption_enabled} · Public: {r.is_public}",
+                        style="font-size:0.8rem; color:#888; margin-top:4px;",
+                    ),
+                    ui.span(verdict, style=f"position:absolute; top:8px; right:8px; font-size:0.75rem; color:{badge_color};"),
+                    style="background:#1A1633; border-radius:8px; padding:12px; margin-bottom:8px; "
+                          "border:1px solid #4A3E8F; position:relative;",
+                )
+            )
+        return ui.div(*cards, style="margin-top:8px;")
 
     @render.text
     def trace_output() -> str:
