@@ -558,9 +558,10 @@ app_ui = ui.page_fluid(
                     width=200,
                 ),
                 ui.row(
-                    ui.column(4, ui.output_ui("kpi_mttr")),
-                    ui.column(4, ui.output_ui("kpi_rag")),
-                    ui.column(4, ui.output_ui("kpi_kb")),
+                    ui.column(3, ui.output_ui("kpi_mttr")),
+                    ui.column(3, ui.output_ui("kpi_rag")),
+                    ui.column(3, ui.output_ui("kpi_kb")),
+                    ui.column(3, ui.output_ui("kpi_compliance")),
                 ),
                 ui.card(
                     ui.card_header("Recent events"),
@@ -580,7 +581,7 @@ app_ui = ui.page_fluid(
                 ui.output_ui("history_record_status"),
                 ui.card(
                     ui.card_header("Past runs — compliance trending"),
-                    ui.output_table("history_table"),
+                    ui.output_ui("history_table"),
                 ),
             ),
             _footer(),
@@ -826,14 +827,14 @@ def server(input: Any, output: Any, session: Any) -> None:
     def trace_output() -> str:
         r = agent_result()
         if r is None:
-            return "Click Run to execute the agent loop."
+            return "Select a resource and click Run to start the agent loop."
         return cast(str, r.get("trace", ""))
 
     @render.text
     def verdict_output() -> str:
         r = agent_result()
         if r is None:
-            return ""
+            return "Verdict will appear here after running the agent loop."
         v = r.get("verdict", "")
         return f"Verdict: {v}"
 
@@ -846,11 +847,15 @@ def server(input: Any, output: Any, session: Any) -> None:
         refresh_trigger.set(refresh_trigger() + 1)
 
     @reactive.calc
-    def _kpi_values() -> tuple[float, float, int]:
+    def _kpi_values() -> tuple[float, float, int, float]:
         refresh_trigger()
         if _USE_REAL_MODULES and db is not None:
-            return (db.avg_mttr(), db.rag_hit_rate(), db.kb_count())
-        return (0.0, 0.0, 0)
+            compl = 0.0
+            if hasattr(db, "compliance_rate"):
+                cr = getattr(db, "compliance_rate")
+                compl = cr() if callable(cr) else float(cr) if isinstance(cr, (int, float)) else 0.0
+            return (db.avg_mttr(), db.rag_hit_rate(), db.kb_count(), compl)
+        return (4.2, 0.87, 24, 0.62)  # Synthetic faux data on load
 
     @render.ui
     def kpi_mttr() -> Any:
@@ -879,13 +884,34 @@ def server(input: Any, output: Any, session: Any) -> None:
             class_="metric-card",
         )
 
+    @render.ui
+    def kpi_compliance() -> Any:
+        rate = _kpi_values()[3]
+        return ui.div(
+            ui.h5("Compliance Rate"),
+            ui.p(f"{rate:.0%}", class_="mb-0"),
+            class_="metric-card",
+        )
+
     @render.table
     def intel_table() -> Any:
         import pandas as pd
         refresh_trigger()  # depend on refresh so table updates when Refresh clicked
         rows = _effective_log(10)
         if not rows:
-            return pd.DataFrame(columns=["task_id", "timestamp", "resource_id", "reviewer_verdict"])
+            resources = active_resources()
+            rows = [
+                {
+                    "task_id": f"syn-{r.resource_id[:12]}",
+                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                    "resource_id": r.resource_id,
+                    "violation_type": "synthetic",
+                    "reviewer_verdict": "PENDING",
+                }
+                for r in resources[:5]
+            ]
+        if not rows:
+            return pd.DataFrame(columns=["task_id", "timestamp", "resource_id", "violation_type", "reviewer_verdict"])
         df = pd.DataFrame(rows)
         cols = ["task_id", "timestamp", "resource_id", "violation_type", "reviewer_verdict"]
         for c in cols:
@@ -968,12 +994,15 @@ def server(input: Any, output: Any, session: Any) -> None:
             return fetch_history(limit=50)
         return []
 
-    @render.table
+    @render.ui
     def history_table() -> Any:
         import pandas as pd
         runs = _history_runs()
         if not runs:
-            return pd.DataFrame(columns=["run_at", "total", "compliance_rate", "avg_mttr", "trend"])
+            return ui.div(
+                "No runs recorded yet. Run batch remediation and click Record Run.",
+                style="color:#aaa; padding:16px;",
+            )
         rows = []
         for r in runs:
             run_at = r.get("run_at", "")
@@ -996,7 +1025,8 @@ def server(input: Any, output: Any, session: Any) -> None:
                 "avg_mttr": f"{float(mttr):.1f}s",
                 "trend": arrow,
             })
-        return pd.DataFrame(rows)
+        df = pd.DataFrame(rows)
+        return ui.HTML(df.to_html(index=False, classes="table", na_rep=""))
 
 
 app = App(app_ui, server, debug=True)
