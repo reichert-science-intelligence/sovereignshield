@@ -916,7 +916,7 @@ def server(input: Any, output: Any, session: Any) -> None:
         v = _run_verdict()
         return v if v else "Verdict will appear here after running."
 
-    # KPI tiles — depend on refresh_trigger so they update when Refresh clicked
+    # KPI tiles — compute immediately on startup, update when Refresh clicked
     refresh_trigger: reactive.Value[int] = reactive.Value(0)
 
     @reactive.effect
