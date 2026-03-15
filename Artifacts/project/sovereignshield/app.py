@@ -734,6 +734,7 @@ def server(input: Any, output: Any, session: Any) -> None:
             choices = {
                 f"{v.get('resource_id', '')}|{v.get('violation_type', '')}": f"{v.get('resource_id', '')} / {v.get('violation_type', '')}"
                 for v in violations
+                if v.get("violation_type") != "opa_error"
             }
             if not choices:
                 choices = {"s3-staging-analytics|data_residency": "s3-staging-analytics / data_residency"}

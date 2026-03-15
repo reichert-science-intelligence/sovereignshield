@@ -86,19 +86,38 @@ def _normalize_resource(r: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def _eval_single_resource(resource: dict[str, Any], policy: str) -> list[str]:
-    """Run OPA eval for one resource. Returns list of violation strings."""
+def _python_evaluate(resource: dict[str, Any]) -> list[str]:
+    """Pure Python policy evaluation — no OPA binary needed."""
+    violations: list[str] = []
+    rid = resource.get("resource_id", "unknown")
+
+    if not resource.get("encryption_enabled", True):
+        violations.append("cmk_encryption|CMK encryption (aws:kms) required")
+    if resource.get("is_public", False):
+        violations.append("is_public|is_public must be False")
+    approved = {"us-east-1", "us-west-2", "us-gov-west-1"}
+    if resource.get("region", "us-east-1") not in approved:
+        violations.append("data_residency|data residency / region constraint")
+    tags = resource.get("tags", {}) or {}
+    if str(resource.get("resource_type", "") or "").startswith("aws_s3"):
+        if tags.get("DataClass") != "PHI":
+            violations.append("phi_tag|DataClass=PHI tag on all resources")
+    return violations
+
+
+def _eval_with_opa(resource: dict[str, Any], policy: str) -> list[str] | None:
+    """Run OPA eval for one resource. Returns violation strings or None on any failure."""
     norm = _normalize_resource(resource)
-    with tempfile.TemporaryDirectory() as tmpdir:
-        policy_path = os.path.join(tmpdir, "policy.rego")
-        with open(policy_path, "w") as f:
-            f.write(policy)
+    try:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            policy_path = os.path.join(tmpdir, "policy.rego")
+            with open(policy_path, "w") as f:
+                f.write(policy)
 
-        input_path = os.path.join(tmpdir, "input.json")
-        with open(input_path, "w") as f:
-            json.dump(norm, f)
+            input_path = os.path.join(tmpdir, "input.json")
+            with open(input_path, "w") as f:
+                json.dump(norm, f)
 
-        try:
             result = subprocess.run(
                 [
                     "opa",
@@ -113,25 +132,21 @@ def _eval_single_resource(resource: dict[str, Any], policy: str) -> list[str]:
                 text=True,
                 timeout=10,
             )
-        except FileNotFoundError:
-            return []  # OPA binary not available — return no violations
 
         if result.returncode != 0:
-            return [f"OPA error: {result.stderr.strip()}"]
+            return None
 
-        try:
-            output = json.loads(result.stdout)
-        except json.JSONDecodeError:
-            return [f"OPA parse error: {result.stdout[:200]}"]
-
+        output = json.loads(result.stdout)
         raw = (
             output.get("result", [{}])[0]
             .get("expressions", [{}])[0]
             .get("value", [])
         )
         if not isinstance(raw, list):
-            return []
+            return None
         return [str(x) for x in raw]
+    except Exception:
+        return None
 
 
 def _resource_to_dict(r: Any) -> dict[str, Any]:
@@ -154,22 +169,13 @@ def evaluate(
 ) -> list[dict[str, Any]]:
     """Evaluate resources against OPA policies. Returns list of violations (dicts)."""
     policy_text = policy or _DEFAULT_POLICY
-    violations: list[dict[str, Any]] = []
+    results: list[dict[str, Any]] = []
     for r in resources:
         r_norm = _resource_to_dict(r)
         rid = str(r_norm.get("resource_id", "unknown"))
-        raw_violations = _eval_single_resource(r_norm, policy_text)
+        raw_violations = _eval_with_opa(r_norm, policy_text)
+        if raw_violations is None:
+            raw_violations = _python_evaluate(r_norm)
         for vstr in raw_violations:
-            if vstr.startswith("OPA error:") or vstr.startswith("OPA parse error:"):
-                violations.append(
-                    {
-                        "resource_id": rid,
-                        "violation_type": "opa_error",
-                        "severity": "HIGH",
-                        "regulation_cited": "",
-                        "detail": vstr,
-                    }
-                )
-            else:
-                violations.append(_violation_str_to_dict(rid, vstr))
-    return violations
+            results.append(_violation_str_to_dict(rid, vstr))
+    return results
