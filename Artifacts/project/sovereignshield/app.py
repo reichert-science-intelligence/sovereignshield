@@ -558,8 +558,8 @@ app_ui = ui.page_fluid(
                     ),
                     ui.card(
                         ui.card_header("Waterfall trace"),
-                        ui.output_text("trace_output"),
-                        ui.output_text("verdict_output"),
+                        ui.output_ui("trace_output"),
+                        ui.output_ui("verdict_output"),
                     ),
                 ),
             ),
@@ -904,17 +904,36 @@ def server(input: Any, output: Any, session: Any) -> None:
             )
         return ui.HTML("".join(cards_html))
 
-    @render.text
-    def trace_output() -> str:
+    @render.ui
+    def trace_output() -> Any:
         v = _run_verdict()
         if not v:
-            return "Select a resource and click Run."
-        return f"Agent completed — verdict: {v}"
+            return ui.div(
+                "Select a resource and click Run.",
+                style="color:#aaa; padding:12px; "
+                      "background:#1A1633; border-radius:8px;"
+            )
+        return ui.div(
+            f"Agent completed — verdict: {v}",
+            style="color:#10B981; padding:12px; "
+                  "background:#1A1633; border-radius:8px; "
+                  "font-weight:700;"
+        )
 
-    @render.text
-    def verdict_output() -> str:
+    @render.ui
+    def verdict_output() -> Any:
         v = _run_verdict()
-        return v if v else "Verdict will appear here after running."
+        if not v:
+            return ui.div(
+                "Verdict will appear here after running.",
+                style="color:#aaa; padding:12px;"
+            )
+        color = "#10B981" if v == "APPROVED" else "#EF4444"
+        return ui.div(
+            v,
+            style=f"color:{color}; font-size:1.4rem; "
+                  f"font-weight:700; padding:12px;"
+        )
 
     # KPI tiles — compute immediately on startup, update when Refresh clicked
     refresh_trigger: reactive.Value[int] = reactive.Value(0)
