@@ -346,6 +346,18 @@ _CSS = """
 .verdict-approved { color: #28a745; font-weight: bold; }
 .verdict-revision { color: #ffc107; font-weight: bold; }
 .verdict-rejected { color: #dc3545; font-weight: bold; }
+.nav-tabs, .nav-pills, [class*="navset"] > div:first-child {
+    display: flex !important;
+    flex-wrap: nowrap !important;
+    overflow-x: auto !important;
+    white-space: nowrap !important;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+}
+.nav-tabs::-webkit-scrollbar, .nav-pills::-webkit-scrollbar,
+[class*="navset"] > div:first-child::-webkit-scrollbar { display: none; }
+.nav-tabs .nav-item, .nav-pills .nav-item,
+[class*="navset"] [role="tablist"] > * { flex-shrink: 0; }
 """
 
 
@@ -529,6 +541,18 @@ app_ui = ui.page_fluid(
                     width=280,
                 ),
                 ui.div(
+                    ui.card(
+                        ui.card_header("Waterfall trace"),
+                        ui.output_ui("trace_output"),
+                        ui.output_ui("verdict_output"),
+                    ),
+                    ui.input_action_button(
+                        "record_run_btn",
+                        "📋 Record run",
+                        class_="btn-secondary",
+                        style="margin-top:12px; width:100%;",
+                    ),
+                    ui.output_ui("record_run_status_agent"),
                     ui.accordion(
                         ui.accordion_panel(
                             "⚙️ OPA Policy Editor",
@@ -555,11 +579,6 @@ app_ui = ui.page_fluid(
                             ui.output_text("policy_status"),
                         ),
                         open=False,
-                    ),
-                    ui.card(
-                        ui.card_header("Waterfall trace"),
-                        ui.output_ui("trace_output"),
-                        ui.output_ui("verdict_output"),
                     ),
                 ),
             ),
@@ -1246,6 +1265,14 @@ def server(input: Any, output: Any, session: Any) -> None:
     @reactive.event(input.history_refresh_btn)
     def _on_history_refresh() -> None:
         history_refresh_trigger.set(history_refresh_trigger() + 1)
+
+    @render.ui
+    def record_run_status_agent() -> Any:
+        msg = record_run_status()
+        if not msg:
+            return ui.div()
+        color = "#10B981" if "recorded" in msg.lower() else "#EF4444"
+        return ui.p(msg, style=f"color:{color}; margin-top:8px; margin-bottom:12px;")
 
     @render.ui
     def history_record_status() -> Any:

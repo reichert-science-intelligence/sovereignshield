@@ -32,4 +32,4 @@ EXPOSE 7860
 
 WORKDIR /app/Artifacts
 CMD ["shiny", "run", "project/sovereignshield/app.py", \
-     "--host", "0.0.0.0", "--port", "7860"]
+     "--host", "0.0.0.0", "--port", "7860", "--timeout", "300"]
