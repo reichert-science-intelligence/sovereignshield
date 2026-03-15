@@ -528,59 +528,56 @@ app_ui = ui.page_fluid(
         ),
         ui.nav_panel(
             "Agent Loop",
-            ui.layout_sidebar(
-                ui.sidebar(
-                    ui.h5("Run remediation"),
-                    ui.input_select(
-                        "violation_select",
-                        "Violation",
-                        choices={"s3-staging-analytics|data_residency": "s3-staging-analytics / data_residency"},  # updated by server
-                    ),
-                    ui.input_action_button("run_btn", "Run", class_="btn-primary"),
-                    title="Controls",
-                    width=280,
+            ui.div(
+                ui.h5("Run Remediation", style="color:#D4AF37; font-weight:700;"),
+                ui.input_select(
+                    "violation_select",
+                    "Violation",
+                    choices={"s3-staging-analytics|data_residency": "s3-staging-analytics / data_residency"},  # updated by server
                 ),
-                ui.div(
-                    ui.card(
-                        ui.card_header("Waterfall trace"),
-                        ui.output_ui("trace_output"),
-                        ui.output_ui("verdict_output"),
+                ui.input_action_button(
+                    "run_btn",
+                    "⚡ Run",
+                    style="background:#D4AF37; color:#1A1633; "
+                          "font-weight:700; border:none; "
+                          "padding:10px 24px; border-radius:8px; "
+                          "width:100%; margin-top:8px;",
+                ),
+                style="margin-bottom:16px;",
+            ),
+            ui.card(
+                ui.card_header("Waterfall trace"),
+                ui.output_ui("trace_output"),
+                ui.output_ui("verdict_output"),
+            ),
+            ui.input_action_button(
+                "record_run_btn",
+                "📋 Record run",
+                style="background:#333; color:white; border:none; "
+                      "padding:10px 24px; border-radius:8px; "
+                      "width:100%; margin-top:8px;",
+            ),
+            ui.output_ui("record_run_status_agent"),
+            ui.accordion(
+                ui.accordion_panel(
+                    "⚙️ OPA Policy Editor",
+                    ui.input_text_area(
+                        "opa_policy_editor",
+                        label=None,
+                        value="",
+                        rows=10,
+                        width="100%",
                     ),
                     ui.input_action_button(
-                        "record_run_btn",
-                        "📋 Record run",
-                        class_="btn-secondary",
-                        style="margin-top:12px; width:100%;",
+                        "apply_policy",
+                        "⚡ Apply Policy",
+                        style="background:#4A3E8F; color:white; "
+                              "border:none; padding:8px 20px; "
+                              "border-radius:6px; margin-top:8px;",
                     ),
-                    ui.output_ui("record_run_status_agent"),
-                    ui.accordion(
-                        ui.accordion_panel(
-                            "⚙️ OPA Policy Editor",
-                            ui.tags.p(
-                                "Edit the active compliance policy below. "
-                                "Click Apply Policy to rerun checks.",
-                                style="color:#aaa; font-size:0.85rem; margin-bottom:8px;",
-                            ),
-                            ui.input_text_area(
-                                "opa_policy_editor",
-                                label=None,
-                                value="",
-                                rows=12,
-                                width="100%",
-                                placeholder="Loading policy...",
-                            ),
-                            ui.input_action_button(
-                                "apply_policy",
-                                "⚡ Apply Policy",
-                                style="background:#4A3E8F; color:white; "
-                                      "border:none; padding:8px 20px; "
-                                      "border-radius:6px; margin-top:8px;",
-                            ),
-                            ui.output_text("policy_status"),
-                        ),
-                        open=False,
-                    ),
+                    ui.output_text("policy_status"),
                 ),
+                open=False,
             ),
             _footer(),
         ),
