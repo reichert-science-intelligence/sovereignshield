@@ -193,6 +193,13 @@ RESOURCES: list[CloudResource] = [
     ),
 ]
 
+# Synthetic history for History tab when fetch_history returns empty or Supabase unavailable
+_SYNTHETIC_HISTORY: list[dict[str, Any]] = [
+    {"run_at": "2026-03-12 14:22", "total": 5, "compliance_rate": "60.0%", "avg_mttr": "3.8s", "trend": "−"},
+    {"run_at": "2026-03-13 09:15", "total": 5, "compliance_rate": "80.0%", "avg_mttr": "2.1s", "trend": "↑"},
+    {"run_at": "2026-03-14 11:45", "total": 5, "compliance_rate": "62.0%", "avg_mttr": "4.2s", "trend": "↓"},
+]
+
 # Seed events for System Intelligence fallback when db is unavailable
 _SEED_EVENTS: list[dict[str, Any]] = [
     {
@@ -799,10 +806,22 @@ def server(input: Any, output: Any, session: Any) -> None:
                 break
         if resource is None:
             return
+        # Normalize to dict regardless of type
+        if isinstance(resource, dict):
+            resource_dict = resource
+        else:
+            resource_dict = {
+                "resource_id": getattr(resource, "resource_id", ""),
+                "resource_type": getattr(resource, "resource_type", ""),
+                "region": getattr(resource, "region", "us-east-1"),
+                "encryption_enabled": getattr(resource, "encryption_enabled", True),
+                "is_public": getattr(resource, "is_public", False),
+                "tags": getattr(resource, "tags", {}),
+            }
         start = time.time()
         try:
             out = await asyncio.to_thread(
-                _run_agents, resource_id, violation_type, resources, active_policy()
+                _run_agents, resource_dict.get("resource_id", resource_id), violation_type, resources, active_policy()
             )
             verdict = out.get("verdict", "ERROR")
             agent_result.set(out)
@@ -1212,9 +1231,31 @@ def server(input: Any, output: Any, session: Any) -> None:
         import pandas as pd
         runs = _history_runs()
         if not runs:
-            return ui.div(
-                "No runs recorded yet. Run batch remediation and click Record Run.",
-                style="color:#aaa; padding:16px;",
+            rows = []
+            for r in _SYNTHETIC_HISTORY:
+                rows.append(
+                    f"<tr>"
+                    f"<td style='padding:8px; color:#eee;'>{r['run_at']}</td>"
+                    f"<td style='padding:8px; color:#eee;'>{r['total']}</td>"
+                    f"<td style='padding:8px; color:#eee;'>{r['compliance_rate']}</td>"
+                    f"<td style='padding:8px; color:#eee;'>{r['avg_mttr']}</td>"
+                    f"<td style='padding:8px; color:#eee;'>{r['trend']}</td>"
+                    f"</tr>"
+                )
+            tbody = "".join(rows)
+            return ui.HTML(
+                f"<div style='background:#1A1633; border-radius:10px; padding:16px;'>"
+                f"<table style='width:100%; border-collapse:collapse; color:#eee;'>"
+                f"<thead><tr style='color:#D4AF37; border-bottom:1px solid #4A3E8F;'>"
+                f"<th style='padding:8px; text-align:left'>run_at</th>"
+                f"<th style='padding:8px; text-align:left'>total</th>"
+                f"<th style='padding:8px; text-align:left'>compliance_rate</th>"
+                f"<th style='padding:8px; text-align:left'>avg_mttr</th>"
+                f"<th style='padding:8px; text-align:left'>trend</th>"
+                f"</tr></thead><tbody>{tbody}</tbody></table>"
+                f"<p style='color:#aaa; font-size:12px; margin-top:12px;'>"
+                f"* Synthetic demo data — record a real run to see live history</p>"
+                f"</div>"
             )
         rows = []
         for r in runs:
