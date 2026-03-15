@@ -134,6 +134,20 @@ def _eval_single_resource(resource: dict[str, Any], policy: str) -> list[str]:
         return [str(x) for x in raw]
 
 
+def _resource_to_dict(r: Any) -> dict[str, Any]:
+    """Normalize CloudResource or dict to dict for OPA input."""
+    if isinstance(r, dict):
+        return dict(r)
+    return {
+        "resource_id": getattr(r, "resource_id", ""),
+        "resource_type": getattr(r, "resource_type", ""),
+        "region": getattr(r, "region", "us-east-1"),
+        "encryption_enabled": getattr(r, "encryption_enabled", True),
+        "is_public": getattr(r, "is_public", False),
+        "tags": getattr(r, "tags", {}),
+    }
+
+
 def evaluate(
     resources: list[dict[str, Any]],
     policy: str | None = None,
@@ -142,8 +156,9 @@ def evaluate(
     policy_text = policy or _DEFAULT_POLICY
     violations: list[dict[str, Any]] = []
     for r in resources:
-        rid = str(r.get("resource_id", "unknown"))
-        raw_violations = _eval_single_resource(r, policy_text)
+        r_norm = _resource_to_dict(r)
+        rid = str(r_norm.get("resource_id", "unknown"))
+        raw_violations = _eval_single_resource(r_norm, policy_text)
         for vstr in raw_violations:
             if vstr.startswith("OPA error:") or vstr.startswith("OPA parse error:"):
                 violations.append(

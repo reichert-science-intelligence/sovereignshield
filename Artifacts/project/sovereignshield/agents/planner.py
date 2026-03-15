@@ -58,6 +58,14 @@ class PlannerAgent:
 
     def run(self, violation: dict[str, Any]) -> PlannerResult:
         """Plan remediation for a single violation. Returns PlannerResult."""
+        # Normalize violation to dict (may be CloudResource-like object)
+        if not isinstance(violation, dict):
+            violation = {
+                "resource_id": getattr(violation, "resource_id", ""),
+                "violation_type": getattr(violation, "violation_type", ""),
+                "regulation_cited": getattr(violation, "regulation_cited", ""),
+                "detail": getattr(violation, "detail", ""),
+            }
         task_id = str(uuid.uuid4())
         resource_id = str(violation.get("resource_id", ""))
         violation_type = str(violation.get("violation_type", ""))

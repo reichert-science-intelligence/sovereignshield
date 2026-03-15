@@ -227,6 +227,20 @@ def _effective_log(limit: int = 10) -> list[dict[str, Any]]:
     return list(_SEED_EVENTS)[:limit]
 
 
+def _resource_to_dict(r: Any) -> dict[str, Any]:
+    """Normalize CloudResource or dict to dict for evaluate/OPA."""
+    if isinstance(r, dict):
+        return dict(r)
+    return {
+        "resource_id": getattr(r, "resource_id", ""),
+        "resource_type": getattr(r, "resource_type", ""),
+        "region": getattr(r, "region", "us-east-1"),
+        "encryption_enabled": getattr(r, "encryption_enabled", True),
+        "is_public": getattr(r, "is_public", False),
+        "tags": getattr(r, "tags", {}),
+    }
+
+
 def _run_agents(resource_id: str, violation_type: str, resources: list[CloudResource], policy: str | None = None) -> dict[str, Any]:
     """
     Run real agent loop: evaluate → planner → worker → reviewer.
@@ -243,7 +257,9 @@ def _run_agents(resource_id: str, violation_type: str, resources: list[CloudReso
             "work": None,
         }
 
-    violations = evaluate(resources, policy)
+    # Normalize resources to dicts (evaluate/OPA expect dicts, not CloudResource)
+    resources_normalized = [_resource_to_dict(r) for r in resources]
+    violations = evaluate(resources_normalized, policy)
     selected = next(
         (
             v
