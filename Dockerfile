@@ -13,16 +13,22 @@ RUN curl -L -o /usr/local/bin/opa \
 
 RUN pip install --no-cache-dir --upgrade pip \
     && pip install --no-cache-dir \
+       gotrue==1.3.0 \
+       httpcore==0.16.3 \
+       httpx==0.23.3 \
+       anyio==3.7.1 \
+       python-dotenv==1.0.0 \
+       supabase==2.3.0 \
+    && pip install --no-cache-dir \
        shiny shinyswatch \
        anthropic \
-       supabase \
        smolagents \
        chromadb==0.5.23 \
        sentence-transformers==3.0.0 \
        pandas numpy plotnine matplotlib \
        python-hcl2 pyyaml jsonschema \
        sqlalchemy aiosqlite \
-       python-dotenv httpx structlog tenacity
+       structlog tenacity
 
 COPY Artifacts/ ./Artifacts/
 
